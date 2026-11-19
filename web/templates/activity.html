@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>活动（最近 30 天）</h1>
+<div class="muted" style="margin:-8px 0 14px">整机口径：每个协作主题一段。{{ tip("每个协作主题各按自己的家统计，不受发现页当前所选的工作区影响") }}</div>
+
+{% for section in sections %}
+<div class="card">
+  <div style="font-weight:700">{{ section.unit.name or section.unit.unit_id }}</div>
+  {% if section.summary %}
+  <div class="muted" style="margin-top:4px">
+    合并 {{ section.summary.workspaces|length }} 个工作区 · {{ section.home }}
+  </div>
+  <div class="row" style="margin:12px 0">
+    <div class="stat"><div class="k">会话</div><div class="v">{{ section.summary.session_count }}</div></div>
+    <div class="stat"><div class="k">事件</div><div class="v">{{ section.summary.event_count }}</div></div>
+    <div class="stat"><div class="k">活跃天数</div><div class="v">{{ section.summary.active_days }}</div></div>
+  </div>
+  <table>
+    <tr><th>来源</th><th>会话</th><th>行数</th><th>最近一条</th></tr>
+    {% for s in section.summary.by_source %}
+    <tr><td>{{ s.source }}</td><td>{{ s.sessions }}</td><td>{{ s.events }}</td><td class="muted">{{ s.newest_ts|local_ts }}</td></tr>
+    {% endfor %}
+  </table>
+  {# A3（刀 V4 删）：这里原来常驻一段「活跃时段覆盖率不再在这里算：它的分母来自我们自己的 digest，永远绿。
+     漏采与未分类在顶部状态线（分母是厂商清单与主题层）」。那是向用户解释"一个被移除的指标为什么被移除"，
+     用户既无法核对也不需要决定什么。**删的是承载位置，不是教训**——
+     这条边界现在住在 docs/ARCHITECTURE-AND-OBSERVATION.md §4.2.2「两条不许越的边界」第 2 条，
+     口径本身在缺口页仍是契约（那句「这是对账，不是覆盖率」由 test_gap_page_rows_equal_the_overview_number 钉）。 #}
+  {% else %}
+  <div class="muted" style="margin-top:6px">还没有摘要。先去发现声明采集根，再回概览点「立即刷新全部」。</div>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if not sections %}<div class="card">本机还没有协作主题。</div>{% endif %}
+{% endblock %}

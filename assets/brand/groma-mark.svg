@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Groma">
+  <title>Groma</title>
+  <desc>四向观测点：古罗马 groma 测距仪的十字基准线与四个等大观测点。图标不含文字。</desc>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="#0f766e"/>
+  <line x1="128" y1="44" x2="128" y2="212" stroke="#ffffff" stroke-width="24"/>
+  <line x1="44" y1="128" x2="212" y2="128" stroke="#ffffff" stroke-width="24"/>
+  <circle cx="128" cy="44" r="22" fill="#ffffff"/>
+  <circle cx="212" cy="128" r="22" fill="#ffffff"/>
+  <circle cx="128" cy="212" r="22" fill="#ffffff"/>
+  <circle cx="44" cy="128" r="22" fill="#ffffff"/>
+</svg>

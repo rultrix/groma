@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+.idea/
+*.tmp
+
+build/
+dist/
+# spec 是构建配置不是产物：两条入库（开源准备 P1-5），其余散件仍忽略
+*.spec
+!groma.spec
+!install-groma.spec
+
+.groma/
+.wb/
+# the committed L1 fixture is evidence, not local state
+!examples/demo-unit/.groma/
+!examples/demo-unit/.groma/**
+
+# 只挡 wb 自己写的那两处；.qoder/ 其余内容仍归用户，不能整个忽略
+.qoder/hooks/
+.qoder/settings.local.json
+
+# build / local artifacts (2026-11-17 收令人整理)
+installer/groma/
+installer/wb/
+spark-output/
+.qoder-credits/

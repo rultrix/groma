@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="{{ url_for('favicon') }}">
+<title>Groma · 本机</title>
+<style>
+  :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --teal:#0f766e; --amber:#b45309; --red:#b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; color:var(--ink); background:#f8fafc; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:14px 24px; display:flex; gap:24px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
+  header .brand { font-weight:800; font-size:18px; }
+  header .unit { color:var(--muted); font-size:13px; }
+  nav a { margin-right:6px; color:var(--muted); text-decoration:none; font-size:14px; padding:5px 11px; border-radius:8px; }
+  nav a:hover { color:var(--teal); }
+  nav a.active { background:var(--teal); color:#fff; font-weight:600; }
+  /* align-items 必须是 flex-start：flex 子项默认 stretch 会把左栏拉成整页高，sticky 就永不生效。 */
+  .shell { display:flex; align-items:flex-start; min-height:100vh; }
+  .rail { flex:0 0 128px; min-width:128px; box-sizing:border-box; background:#fff; border-right:1px solid var(--line); padding:14px 12px; display:flex; flex-direction:column; gap:14px; position:sticky; top:0; height:100vh; overflow-y:auto; }
+  .rail nav { display:flex; flex-direction:column; gap:2px; }
+  .rail nav a { margin-right:0; }
+  .content { flex:1; min-width:0; display:flex; flex-direction:column; }
+  /* 窄档收成图标条：文字留在 DOM 里只做视觉裁切，读屏与 title 拿到的仍是全名。 */
+  @media (max-width:702px) {
+    .rail { flex:0 0 36px; min-width:36px; padding:12px 11px; }
+    .rail nav a { width:14px; padding:5px 0; white-space:nowrap; overflow:hidden; }
+  }
+  .strip { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0 6px; font-size:13px; }
+  .chip { background:#fff; border:1px solid var(--line); border-radius:8px; padding:3px 9px; color:var(--muted); }
+  .chip b { color:var(--ink); }
+  .chip.warn { border-color:#fde68a; background:#fffbeb; color:#78350f; }
+  .chip.bad { border-color:#fecaca; background:#fef2f2; color:#7f1d1d; }
+  main { width:100%; min-width:0; max-width:1600px; margin:24px auto 60px; padding:0 24px; }
+  h1 { font-size:22px; margin:0 0 16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
+  /* 刀 W10（裁定 2）：看着像弹层的确认页——`<dialog open>` ＋ 纯 CSS 遮罩，行为仍是两步提交。
+     Esc 关不掉（关得掉要靠 JS），所以弹层里必须有可见的「取消」链接；零 JS 红线没动。 */
+  .modal-veil { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:50;
+                display:flex; align-items:flex-start; justify-content:center; padding:40px 16px 24px; overflow:auto; }
+  .modal-veil dialog[open] { position:relative; margin:0; width:100%; max-width:640px; border:1px solid var(--line);
+                             border-radius:12px; background:#fff; padding:20px 22px; color:var(--ink);
+                             box-shadow:0 20px 50px rgba(15,23,42,.25); }
+  .modal-veil dialog::backdrop { background:transparent; }
+  .scope-bar { background:#f0fdfa; border:1px solid #a7f3d0; color:#065f46; border-radius:12px; padding:10px 14px; margin-bottom:16px; font-size:14px; }
+  a.primary { display:inline-block; background:var(--teal); color:#fff; border-radius:8px; padding:8px 16px; font-size:14px; text-decoration:none; }
+  a.primary:hover { filter:brightness(1.08); }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .stat { flex:1; min-width:150px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .stat .k { font-size:12px; color:var(--muted); }
+  .stat .v { font-size:22px; font-weight:700; margin-top:4px; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+  .on { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+  .off { background:#fffbeb; color:var(--amber); border:1px solid #fde68a; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  /* 只有 anywhere/break-all 参与 min-content；break-word 不参与（刀 W5 实测 739→732）*/
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:12px; overflow-wrap:anywhere; }
+  button { background:var(--teal); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer; }
+  button.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  button.danger { background:#fff; color:var(--red); border:1px solid #fecaca; }
+  a.danger { display:inline-block; background:#fff; color:var(--red); border:1px solid #fecaca; border-radius:8px; padding:7px 12px; font-size:14px; }
+  /* 刀 W27c（Owner 0.55 实测①）：块级动作要离开文字流并自带视觉差——
+     白底 ghost 混在成句的灰字里，人认不出那是个按钮。 */
+  .block-head { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:6px; }
+  .block-actions { display:flex; gap:8px; align-items:center; }
+  button.reforge { background:var(--teal); color:#fff; border:0; border-radius:8px; padding:6px 12px; font-size:13px; }
+  .err { background:#fef2f2; border:1px solid #fecaca; color:#7f1d1d; padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:13px; }
+  .ok { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; padding:10px 12px; border-radius:8px; margin-bottom:16px; font-size:13px; word-break:break-all; }
+  .muted { color:var(--muted); font-size:13px; }
+  main a:not(.primary):not(.danger) { color:var(--teal); text-decoration:underline; }
+  main a:not(.primary):not(.danger):visited { color:var(--teal); }
+  main a:not(.primary):not(.danger):hover { filter:brightness(.9); }
+  main a:not(.primary):not(.danger):focus-visible { outline:2px solid var(--teal); outline-offset:2px; }
+  /* ⓘ 承载（刀 V4；PROPOSAL §4.0 承载一）。四处要一起看：
+     ① 只写 :hover 就是 hover-only——键盘够不到，所以 tabindex="0" 配 :focus/:focus-visible 两条都留；
+     ② 浮窗文本走 data-tip + attr()（纯 CSS，零 JS），同时调用点必须再给 title 与 aria-label，
+        否则读屏拿到的是一个光秃秃的圆圈；
+     ③ 这里的注释会进**每一页**的响应字节，所以任何页面级 assertNotIn 都会把它算进断言面——
+        不要往这段里抄被删掉的界面原话；
+     ④ 隐藏态必须是 display:none，不能只 opacity:0 或只 visibility:hidden。
+        刀 V5 复量查出来的：绝对定位的 ::after **照样参与可滚动区域**，透明不等于不占位——
+        900 宽下概览页 scrollWidth 1050，把 .hint 摘掉是 885（+165 是一条看不见也摸不着的死滚动）。
+        换成 display:none 后同一处量到 885。 */
+  .hint { display:inline-block; position:relative; cursor:help; color:var(--muted); border:1px solid var(--line);
+          border-radius:50%; width:18px; height:18px; line-height:16px; text-align:center; font-size:12px;
+          vertical-align:baseline; background:#fff; }
+  .hint::after { content:attr(data-tip); display:none; position:absolute; left:0; top:1.5em; z-index:20;
+                 width:max-content; max-width:22em; padding:8px 10px; background:#0f172a; color:#fff;
+                 font-size:12px; font-weight:400; line-height:1.5; text-align:left; border-radius:8px;
+                 pointer-events:none; }
+  .hint:hover::after, .hint:focus::after, .hint:focus-visible::after { display:block; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:24px; }
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="rail">
+  {# 这个 <nav> 必须是文档里第一个 nav——
+     契约由 tests/test_web.py 的 test_rail_is_the_first_nav_container 与
+     test_the_navigation_has_six_entries 两条钉着。取法自 R17 起是"第一个 nav 标签（可带属性）
+     到它自己的 </nav>"（`first_nav_block`），所以这里可以带 aria-label；
+     带属性带进来的可读性由 test_the_first_nav_block_declares_its_name 钉住，不是顺手加的。 #}
+  <nav aria-label="主导航">
+    {% set here = request.path %}
+    <a class="{{ 'active' if here == url_for('index') }}" href="{{ url_for('index') }}" title="概览">概览</a>
+    <a class="{{ 'active' if here == url_for('discover_page') }}" href="{{ url_for('discover_page') }}" title="发现">发现</a>
+    <a class="{{ 'active' if here == url_for('activity_page') }}" href="{{ url_for('activity_page') }}" title="活动">活动</a>
+    <a class="{{ 'active' if here == url_for('assets_page') }}" href="{{ url_for('assets_page') }}" title="资产">资产</a>
+    <a class="{{ 'active' if here == url_for('units_page') }}" href="{{ url_for('units_page') }}" title="协作主题">协作主题</a>
+    <a class="{{ 'active' if here == url_for('observe_page') }}" href="{{ url_for('observe_page') }}" title="观测">观测</a>
+  </nav>
+</aside>
+<div class="content">
+<header>
+  <span class="brand"><a href="{{ url_for('about_page') }}">Groma</a> <span class="muted">v{{ app_version or "dev" }}</span></span>
+</header>
+<main>
+  <div class="strip">
+    <span class="chip">工作区 <b>{{ registered|length }}</b> ｜ 协作主题 <b>{{ units|length }}</b></span>
+    {% if paused %}<span class="chip warn">已暂停</span>{% else %}<span class="chip">采集中</span>{% endif %}
+    {% if report %}
+    <span class="chip">已采 <b>{{ report.counts.collected }}</b></span>
+    <span class="chip">厂商清单 <b>{{ report.counts.vendor_db_sessions }}</b></span>
+    <span class="chip">漏采 <b>{{ report.counts.missing_from_collection }}</b></span>
+    <span class="chip warn">未分类 <b>{{ report.coverage.unclassified }}</b></span>
+    {% if report.counts.undeclared_roots %}<span class="chip bad">有根没申报 <b>{{ report.counts.undeclared_roots }}</b></span>{% endif %}
+    {% endif %}
+  </div>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  {% if notice %}<div class="ok">{{ notice }}</div>{% endif %}
+  {% block body %}{% endblock %}
+</main>
+<footer>本地运行 · 不上传 · 不写回 Harness ｜ <a href="{{ url_for('about_page') }}">关于</a></footer>
+</div>
+</div>
+</body>
+</html>

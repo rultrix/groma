@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>协作主题</h1>
+<div class="muted" style="margin:-8px 0 16px">
+  协作主题是标签，不是视角：本页把本机的协作主题一次列全，管理在各协作主题的详情里。整机数字看<a href="{{ url_for('index') }}">概览</a>，
+  选工作区去<a href="{{ url_for('discover_page') }}">发现</a>。<b>不需要 GitHub，也不需要 git remote。</b>
+  作用域来源是 <code>units.json</code>{{ tip("还包含 memberships.json") }}。
+  {# U1（刀 V4）：删掉「（目录里的 groma-unit.json 只是导出件）」——实现细节，用户不据此做动作；
+     这句话没有丢：ARCHITECTURE §2.1 那张存储表里 `groma-unit.json` 的说明就是它（"Unit 身份的导出件（可提交；家目录持有）"）。 #}
+</div>
+
+{# 刀 W21a（任务书 §4.2/§4.3/§4.4）：新建卡上移到列表之前；「家」从自由文本改成
+   已登记工作区的下拉。零选项时不渲染表单、只给指路；0 个协作主题时补一张空态卡。 #}
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">新建一个协作主题</div>
+  {% if home_options %}
+  <form method="post" action="{{ url_for('unit_create') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input name="name" placeholder="协作主题名称（必填）" required
+           style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    <input name="org_path" placeholder="组织路径（可留空）"
+           style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    <label class="muted" for="new-theme-home">依附工作区</label>
+    <select id="new-theme-home" name="home" required
+            style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;max-width:420px">
+      <option value="" disabled{% if not default_home %} selected{% endif %}>选择已登记的工作区</option>
+      {% for w in home_options %}
+      <option value="{{ w.path }}"{% if w.path == default_home %} selected{% endif %}>{{ w.name }} — {{ w.path }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="ghost">新建并设为当前</button>
+  </form>
+  <div class="muted" style="margin-top:6px">选中的区就是新协作主题的「家」；若它已独自属于另一个协作主题，这次是改名/换家，不会再多出一个。</div>
+  {% else %}
+  <div class="muted">本机还没有可依附的工作区——先去<a href="{{ url_for('discover_page') }}">发现</a>页添加一个，再回来新建协作主题。</div>
+  {% endif %}
+  <div class="muted" style="margin-top:6px">协作主题是标签：建好后在它的详情里可以把别的工作区并进来。本机还没登记的目录，先去<a href="{{ url_for('discover_page') }}">发现</a>页添加工作区。</div>
+</div>
+{% if not blocks %}
+<div class="card">
+  <div class="muted" style="margin-bottom:6px"><b>协作主题列表</b></div>
+  <div class="muted">本机还没有协作主题。</div>
+</div>
+{% endif %}
+
+{% for block in blocks %}
+{% set unit = block.unit %}
+{# 刀 W17（裁定 7/8）：每个 block = 可见摘要行 + 一个默认收起的 `<details>`。
+   摘要行只留：主题名 · org_path、工作区数/资产数、链路状态句、两句警告。
+   管理动作（改名/组织路径/说明/工作区表/others/注入/删除）全部折进详情。
+   判据用 outside_details_blocks：折叠后 assertIn 照样绿，测不出"用户看不见了"。 #}
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start">
+    <div>
+      <div style="font-size:16px;font-weight:700">{{ unit.name or block.unit_id }}</div>
+      <div class="muted"><code>{{ block.unit_id }}</code>{% if unit.org_path %} · {{ unit.org_path }}{% endif %}</div>
+    </div>
+    <div class="muted" style="text-align:right">
+      {{ block.rows|length }} 个工作区 · {{ block.assets|length }} 份资产
+      {# 刀 W27c（Owner 0.55 实测①）：重铸原来 inline 在链路句子里，白底 12px，人认不出它是按钮。
+         现在离开文字流，放在块头右端的动作位上，并给它一个实心底（.reforge）。 #}
+      <span class="block-actions">
+        <form method="post" action="{{ url_for('topic_reforge') }}">
+          <input type="hidden" name="unit" value="{{ block.unit_id }}">
+          <input type="hidden" name="from" value="units">
+          <button type="submit" class="reforge">重铸</button>
+        </form>
+      </span>
+    </div>
+  </div>
+  {% if block.chain %}
+  <div class="muted" style="margin-top:8px">
+    链路：上次归类成功 <b>{{ block.chain.last_success|local_ts("从未") }}</b>
+    ｜ 上次尝试 <b>{{ block.chain.last_attempt|local_ts("从未") }}</b>{% if block.chain.last_attempt_state and block.chain.last_attempt_state != "applied" %}<span style="color:#b45309">（<b>失败：{{ block.chain.last_attempt_text }}</b>）</span>{% endif %}
+    ｜ 上次重铸 {% if block.chain.last_reforge %}<b>{{ block.chain.last_reforge|local_ts }}</b>（<code>{{ block.chain.asset_id }}</code>）{% else %}<b>从未</b>{% endif %}
+    ｜ 本协作主题资产已注入 <b>{{ block.chain.serving|length }}/{{ block.rows|length }}</b> 个工作区{% if block.chain.serving %}（{{ block.chain.serving|join("、") }}）{% endif %}
+    ｜ <a href="{{ url_for('evidence_page', unit=block.unit_id) }}"><b>{{ block.chain.evidence_count }}</b> 条证据</a>
+    {% if not settings.auto_reforge %}<span style="color:#b45309">｜ <b>未传导（自动重铸已关）</b>{{ tip("归类结果不会自己变成资产") }}</span>{% endif %}
+    {% if not settings.auto_inject %}<span style="color:#b45309">｜ <b>未投放（自动投放已关）</b>{{ tip("重铸了也不会自己投放到工作区") }}</span>{% endif %}
+    {# U2（刀 V4）：两条破折号解释进 ⓘ，状态本体留在可见面。
+       可见的第二句原样是「重铸了也不会自己投放（自动投放已关）」，这里把它压成
+       「未投放（自动投放已关）」+浮窗——**契约只钉第一句**（test_theme_page_shows_the_chain_stopped
+       钉「未传导（自动重铸已关）」），第二句没有钉，改名是刀 V4 的处置，不是改契约。 #}
+    {% if block.chain.serving|length < block.rows|length %}<span style="color:#b45309">—— 还有工作区没在跑本协作主题的资产</span>{% endif %}
+  </div>
+  {% endif %}
+  {# 刀 W17：退化警告原住在说明 form 下面，随 form 折进详情就等于删了，所以搬到摘要面。 #}
+  {% if not block.topic or not block.topic.intent %}<div class="muted" style="margin-top:6px"><b style="color:#b45309">没有说明时自动归类会退化。</b></div>{% endif %}
+  {% if block.detect_error %}<div class="err" style="margin-top:10px">{{ block.detect_error }}</div>{% endif %}
+  {% if block.lost %}<div class="muted" style="margin-top:6px"><b style="color:#b45309">失联工作区：</b>{% for path in block.lost %}<code>{{ path }}</code>{% if not loop.last %}、{% endif %}{% endfor %}——登记行还在，目录已不存在；下面的「删除这个协作主题」会一并清掉这些行。</div>{% endif %}
+
+  <details style="margin-top:10px">
+    <summary class="muted" style="cursor:pointer">展开管理（改名 · 说明 · 工作区 · 注入）</summary>
+
+    <div class="muted" style="margin-top:8px">家 <code>{{ block.home or "（没有家）" }}</code>{% if block.info and block.info.branch %} ｜ 分支 {{ block.info.branch }}{% endif %}</div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+      <form method="post" action="{{ url_for('units_rename') }}" style="display:flex;gap:6px;align-items:center">
+        <input type="hidden" name="unit" value="{{ block.unit_id }}">
+        <input name="name" value="{{ unit.name or '' }}" placeholder="协作主题名称，例如「ACPE 采集改造」"
+               style="min-width:240px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        <button type="submit">改名</button>
+      </form>
+      <form method="post" action="{{ url_for('units_org') }}" style="display:flex;gap:6px;align-items:center">
+        <input type="hidden" name="unit" value="{{ block.unit_id }}">
+        <input name="org_path" value="{{ unit.org_path or '' }}" placeholder="组织路径 host/owner/repo（可留空）"
+               style="min-width:240px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        <button type="submit" class="ghost">设组织路径</button>
+      </form>
+    </div>
+
+    <form method="post" action="{{ url_for('units_intent') }}" style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <input type="hidden" name="unit" value="{{ block.topic.topic_id if block.topic else (unit.name or unit.unit_id) }}">
+      <span class="muted" style="min-width:64px">一句说明</span>
+      <input name="intent" value="{{ (block.topic.intent if block.topic else '') or '' }}"
+             placeholder="包含什么、明确不含什么"
+             style="flex:1;min-width:320px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+      {# U8（刀 V4）：placeholder 里那半句「——这是归类判据，不是简介；不进任何导出物」移出输入框，
+         框内只留"该写什么"。判据身份与"不进导出物"进 ⓘ（同一条 tip 宏，读屏与键盘都够得到）。 #}
+      {{ tip("这是归类判据，不是简介；不进任何导出物") }}
+      <button type="submit" class="ghost">保存说明</button>
+    </form>
+    <div class="muted" style="margin-top:4px">
+      改说明只影响<b>下一次</b>归类，已入选的会话不会被重判；清空即删除判据。
+      {# U4（刀 V4）：删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
+         那是我们做这条判断时的论据，不是用户当下能核对或据以决定的东西；论据留在这里当代码注释。
+         被钉的仍是前半句（test_an_empty_intent_is_announced_as_a_degradation）——
+         刀 W17 把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。 #}
+    </div>
+
+    <table style="margin-top:12px">
+      <tr><th style="width:22%">工作区</th><th style="width:11%">身份</th><th style="width:9%">会话 / 事件</th><th style="width:11%">采集</th><th style="width:30%">注入</th><th style="width:17%"></th></tr>
+      {% for r in block.rows %}
+      {% set inj = block.injection.get(r.path) or {} %}
+      <tr>
+        <td><strong>{{ r.name }}</strong><br><code>{{ r.path }}</code></td>
+        <td>
+          {% if r.is_home %}<span class="badge on">家</span>
+          {% elif r.membership %}<span class="badge off">{{ r.membership.role }} · {{ r.membership.signal }}</span>
+          {% else %}<span class="muted">未并入</span>{% endif %}
+          {% if r.membership and r.membership.authorized_by %}
+          <div class="muted" style="margin-top:2px">{{ r.membership.authorized_by }} · {{ r.membership.created_at|local_date }}</div>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.sessions is none %}<span class="muted">未采集</span>
+          {% else %}{{ r.sessions }} / {{ r.events }}{% endif %}
+          {% if r.sessions == 0 and r.outside_cwds %}
+          <div class="muted" style="margin-top:4px">
+            不是坏了：这些会话的 cwd 记在别处——
+            {% for c in r.outside_cwds[:3] %}<code>{{ c.name }}</code> {{ c.sessions }} 条{{ "、" if not loop.last }}{% endfor %}
+          </div>
+          {% endif %}
+        </td>
+        <td>
+          {% if not r.initialised %}<span class="muted">还没初始化</span>
+          {% elif r.sources %}{% for s in r.sources %}<span class="badge off">{{ s }}</span> {% endfor %}
+          {% else %}<span class="badge off">未声明采集根</span>{% endif %}
+        </td>
+        <td style="word-break:break-all">
+          {% if not inj.state or inj.state == 'off' %}<span class="muted">未注入</span>
+          {% elif inj.state == 'paused' %}<span class="badge off">已停发</span>
+          {% elif not inj.serving %}<span class="badge off">载荷就绪 · 无装载面</span>
+          {% elif inj.state == 'stale' %}<span class="badge off">投放中 · 偏旧</span>
+          {% else %}<span class="badge on">投放中</span>{% endif %}
+          {% if inj.asset_id %}
+          <div class="muted" style="margin-top:2px">{{ inj.title }}<br>{{ inj.asset_id }}</div>
+          {% endif %}
+          {% if inj.reason %}<div class="muted" style="margin-top:2px">{{ inj.reason }}</div>{% endif %}
+          {% if inj.asset_id and not inj.hook_registered %}
+          <form method="post" action="{{ url_for('unit_inject_hook') }}" style="margin-top:4px">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <input type="hidden" name="confirm" value="1">
+            <button type="submit" class="ghost">注册 Qoder hook</button>
+            <span class="muted">写 <code>.qoder/hooks/groma_inject.py</code> ＋ 注册（首次需你确认）</span>
+          </form>
+          {% elif inj.hook_registered %}
+          <form method="post" action="{{ url_for('unit_inject_hook') }}" style="margin-top:4px;display:inline">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <input type="hidden" name="off" value="1">
+            <button type="submit" class="ghost">摘除 hook</button>
+          </form>
+          {% endif %}
+          {% if inj.last_delivery %}
+          <div class="muted" style="margin-top:2px">
+            上次送达 {{ inj.last_delivery.at|local_ts }} · {{ inj.last_delivery.chars }} 字
+            · sha <code>{{ (inj.last_delivery.sha256 or '')[:8] }}</code> · {{ inj.last_delivery.event }}
+          </div>
+          {% endif %}
+          {% if inj.faces and inj.faces|length %}<div class="muted">块面：{{ inj.faces|join('、') }}</div>{% endif %}
+        </td>
+        <td style="white-space:nowrap">
+          {% if not r.is_home %}
+          <form method="post" action="{{ url_for('unit_home') }}" style="display:inline">
+            <input type="hidden" name="unit" value="{{ block.unit_id }}">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <button type="submit" class="ghost">设为家</button>
+          </form>
+          {% endif %}
+          {% if inj.asset_id %}
+          <form method="post" action="{{ url_for('unit_inject_refresh') }}" style="display:inline">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <button type="submit" class="ghost">刷新载荷</button>
+          </form>
+          <form method="post" action="{{ url_for('unit_inject_stop') }}" style="display:inline">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <button type="submit" class="ghost">停发</button>
+          </form>
+          {% endif %}
+          {% if r.membership %}
+          <form method="post" action="{{ url_for('units_leave') }}" style="display:inline">
+            <input type="hidden" name="unit" value="{{ block.unit_id }}">
+            <input type="hidden" name="path" value="{{ r.path }}">
+            <button type="submit" class="ghost">移出协作主题</button>
+          </form>
+          {% endif %}
+          <a href="{{ url_for('workspace_remove_page', path=r.path) }}" style="margin-left:8px;color:var(--red);font-size:13px">从本机移除</a>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not block.rows %}<tr><td colspan="6" class="muted">这个协作主题还没有本机工作区。</td></tr>{% endif %}
+    </table>
+
+    {# 刀 W9（Owner 裁定 4）：挂主题的口子从发现页搬到这里——**block 就是主题**，所以每行一个 form、
+       hidden unit 恒等于本 block 的 unit_id，不放 `<select>`（裁定 4②）。
+       这一块的形状由 `test_the_theme_page_offers_joining_each_registered_outsider` 按"每个实例"逐 form 判，
+       发现页那边由 `test_discover_no_longer_offers_joining_a_theme` 钉它不再出现。 #}
+    {% if block.others %}
+    <div class="muted" style="margin:14px 0 4px"><b>可并入这个协作主题的工作区</b></div>
+    <table>
+      <tr><th style="width:47%">目录</th><th style="width:26%">它自称的协作主题</th><th style="width:27%">加入</th></tr>
+      {% for w in block.others %}
+      <tr>
+        <td><strong>{{ w.name }}</strong><br><code>{{ w.path }}</code></td>
+        <td class="muted">{{ unit_names.get(w.unit_id) or "无身份卡" }}
+          {% if w.unit_id %}<details><summary>详情</summary><code>{{ w.unit_id }}</code></details>{% endif %}</td>
+        <td>
+          <form method="post" action="{{ url_for('units_join') }}" style="display:flex;gap:6px;align-items:center">
+            <input type="hidden" name="unit" value="{{ block.unit_id }}">
+            <input type="hidden" name="path" value="{{ w.path }}">
+            <input type="hidden" name="from" value="units_page">
+            <button type="submit" class="ghost">加入这个协作主题</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if block.assets %}
+    <form method="post" action="{{ url_for('unit_inject_apply') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">
+      <input type="hidden" name="unit" value="{{ block.unit_id }}">
+      <span class="muted">把某份资产设为注入源：</span>
+      <select name="asset_id" style="padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-width:340px">
+        {% for a in block.assets %}
+        <option value="{{ a.asset_id }}">{{ a.title }}（{{ a.totals.sessions }} 会话 · {{ a.generated_at|local_date }}）</option>
+        {% endfor %}
+      </select>
+      <select name="path" style="padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-width:280px">
+        {% for r in block.rows %}<option value="{{ r.path }}"{% if r.is_home %} selected{% endif %}>{{ r.name }}{% if r.is_home %} ｜家{% endif %}</option>{% endfor %}
+      </select>
+      <label class="muted" style="display:flex;gap:4px;align-items:center">
+        <input type="checkbox" name="all" value="1"> 本协作主题全部工作区
+      </label>
+      <button type="submit">注入到这里</button>
+    </form>
+    {% endif %}
+
+    {# 刀 W12：删主题的入口挂在**每个 block 自己**的详情里，带上本 block 的 unit_id（不做下拉、不混选择）。
+       刀 W17（裁定 8）：从抬头移进详情，不再常驻可见面；红色分级属机会点 3，本轮不做。 #}
+    <div style="margin-top:14px"><a class="danger" style="padding:4px 10px;font-size:13px"
+         href="{{ url_for('unit_delete_confirm', unit=block.unit_id) }}">删除这个协作主题</a></div>
+  </details>
+</div>
+{% endfor %}
+
+{% if dead %}
+{# 刀 W27e（Owner 令）：目录已经不存在的登记行——它既不该出现在上面的「可并入」候选表里
+   （那里现在与 registered_paths() 同一把尺），也不该在界面上无处可清。
+   按 项目所有者 对"没有主题的工作区不要列出来"的口味，这一节收成一行摘要＋折叠：
+   它不是作用域、不是资产，是本机登记的家底。 #}
+<div class="card muted" style="margin-top:14px">
+  <b>{{ dead|length }} 条失效的登记</b>（目录已不存在，登记行还在）——只影响本机登记，不影响任何协作主题的资产。
+  <details style="margin-top:8px">
+    <summary style="cursor:pointer">逐条查看并清掉</summary>
+    <table style="margin-top:8px">
+      <tr><th style="width:40%">目录</th><th style="width:32%">曾经挂的协作主题</th><th style="width:28%">出口</th></tr>
+      {% for item in dead %}
+      <tr>
+        <td><strong>{{ item.name }}</strong><br><code>{{ item.path }}</code></td>
+        <td>{{ unit_names.get(item.unit_id) or "—" }}</td>
+        <td>
+          <a href="{{ url_for('workspace_forget_page', path=item.path) }}">清掉这条登记</a>
+          <span class="muted">（只删登记行，不碰任何文件）</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </details>
+</div>
+{% endif %}
+
+{# 刀 W21a（任务书 §4.5）：Vault 不属于任何协作主题，用一行小标题解释它为什么在最后。 #}
+<div class="muted" style="margin:20px 0 4px"><b>本机设置（不属于任何协作主题）</b></div>
+
+{# Vault status card: implemented by the vault session (2026-11-09), not the peer. #}
+<div class="card" style="margin-top:20px;border-left:4px solid #6366f1">
+  <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start">
+    <div>
+      <div style="font-size:16px;font-weight:700">Vault 上下文保险库</div>
+      <div class="muted" style="margin-top:2px">
+        {% if vault.error %}
+          <span style="color:var(--red)">错误：{{ vault.error }}</span>
+        {% else %}
+          路径 <code>{{ vault.root }}</code>
+          {% if vault.health.verdict == 'ok' %}
+            · <span style="color:#16a34a">健康</span>
+          {% else %}
+            · <span style="color:var(--red)">异常</span>
+          {% endif %}
+          · {{ vault.session_count }} 个会话 · {{ vault.shard_count }} 个分片
+        {% endif %}
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <form method="get" action="{{ url_for('vault_move_confirm') }}" style="display:flex;gap:6px;align-items:center">
+        <input name="to" placeholder="新路径（绝对路径）" required
+               style="min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        <button type="submit" class="ghost">移动</button>
+      </form>
+      <a href="{{ url_for('vault_purge_confirm') }}"
+         style="background:var(--red);color:white;border:1px solid var(--red);border-radius:8px;padding:8px 14px;font-size:14px;text-decoration:none">清空</a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

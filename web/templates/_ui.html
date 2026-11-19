@@ -1,0 +1,11 @@
+{# 刀 V4 承载一（ⓘ）的唯一写法。
+
+   为什么要有这个宏：设计侧复核裁定 1 要求 ⓘ 同时给 `data-tip`（CSS 浮窗的文本源）、
+   `title`（原生悬停）与 `aria-label`（读屏），再加 `tabindex="0"` 让 `:focus-visible` 够得到。
+   四个属性手写十几遍，漏任何一个就是"hover-only"或"读屏读到一个圆圈"，
+   而这种退化不会有任何测试变红——所以把它收成一个调用点。
+
+   文本只许传纯文本：这里不做转义以外的加工，`<b>` 之类的标记会当字面量进属性。 #}
+{% macro tip(text) -%}
+<span class="hint" tabindex="0" data-tip="{{ text }}" title="{{ text }}" aria-label="说明：{{ text }}">ⓘ</span>
+{%- endmacro %}

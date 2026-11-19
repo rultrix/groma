@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>清掉一条失效的登记</h1>
+
+{# 刀 W27e（Owner 令）：这类行的目录已经不存在，「移除工作区」那条路在路由处就要求目录存在，
+   所以它原本在界面上无处可清。这一步只动本机登记表里的一行——没有文件可删。
+   形状沿用确认页：这一页只读，POST 才动数据，且必须带 confirm=1；零 JS，Esc 关不掉，故有可见的「取消」。 #}
+<div class="modal-veil">
+  <dialog open>
+    <div style="font-size:16px;font-weight:700">确认清掉登记 {{ target_name }}</div>
+    <div class="muted" style="margin-top:4px"><code>{{ target }}</code></div>
+
+    <div class="muted" style="margin:14px 0 4px"><b>这一步会删什么</b></div>
+    <table>
+      <tr><th style="width:40%">对象</th><th>内容</th></tr>
+      <tr>
+        <td>本机登记表里的一行</td>
+        <td>{{ target }}<div class="muted" style="margin-top:2px">登记于 {{ registered_at|local_ts("未知") }}</div></td>
+      </tr>
+      <tr>
+        <td>它挂着的协作主题</td>
+        <td>{{ unit_name or "—（它没有挂任何协作主题）" }}
+          <div class="muted" style="margin-top:2px">如果这个协作主题只剩这一行，它会跟着退役（记进 <code>retired-units.jsonl</code>）。</div></td>
+      </tr>
+      <tr>
+        <td>文件</td>
+        <td><b>零</b>——这个目录已经不在了，没有东西可删；项目文件、Harness 数据库与会话一律不碰。</td>
+      </tr>
+    </table>
+
+    <form method="post" action="{{ url_for('workspace_forget') }}" style="margin-top:16px">
+      <input type="hidden" name="path" value="{{ target }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="danger">确认清掉这条登记</button>
+    </form>
+    <p style="margin-top:12px"><a href="{{ url_for('units_page') }}">取消，← 返回协作主题页</a></p>
+  </dialog>
+</div>
+{% endblock %}

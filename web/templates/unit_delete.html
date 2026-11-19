@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>删除协作主题</h1>
+
+{# 刀 W12（裁定 2/7）：同 W10 的弹层结构。这一页只读，POST 才动数据，且必须带 confirm=1。
+   删的是**主题**，不是工作区：工作区与项目文件都留下，只把 Groma 挂在上面的东西摘掉。 #}
+<div class="modal-veil">
+  <dialog open>
+    <div style="font-size:16px;font-weight:700">确认删除协作主题 {{ unit_name }}</div>
+    <div class="muted" style="margin-top:4px"><code>{{ unit_id }}</code>{% if org_path %} · {{ org_path }}{% endif %}</div>
+
+    <div class="muted" style="margin-top:12px">
+      <b>工作区与项目文件都留下，只忘协作主题。</b>
+      它的 {{ workspaces|length }} 个工作区会变成<b>没有协作主题的工作区</b>——注册表里还在，但在概览上不出现（没有协作主题的区不参与观测）。
+    </div>
+
+    <div class="muted" style="margin:14px 0 4px"><b>这些会被摘掉</b></div>
+    <table>
+      <tr><th style="width:52%">工作区</th><th>注入块所在的文件</th></tr>
+      {% for w in workspaces %}
+      <tr>
+        <td><strong>{{ w.name }}</strong><br><code>{{ w.path }}</code></td>
+        <td>{% if w.blocks %}{% for b in w.blocks %}<code>{{ b }}</code>{{ "、" if not loop.last }}{% endfor %}
+          {% else %}<span class="muted">没有</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      {% if not workspaces %}<tr><td colspan="2" class="muted">这个协作主题还没有本机工作区。</td></tr>{% endif %}
+    </table>
+    <div class="muted" style="margin-top:8px">
+      另外：这些工作区根目录上的身份卡 <code>groma-unit.json</code> 会删掉（它可能被版本库跟踪），
+      注册表行里的协作主题指针也会清掉——不清，下次启动会照它把协作主题重建回来。
+      <code>.groma/</code> 与项目自己的文件一个都不动。
+    </div>
+
+    {% if blocked %}
+    <div class="err" style="margin-top:14px"><b>这个协作主题现在不能删：</b>{{ blocked }}</div>
+    {% endif %}
+
+    {% if not blocked %}
+    <form method="post" action="{{ url_for('unit_delete') }}" style="margin-top:16px">
+      <input type="hidden" name="unit" value="{{ unit_id }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="danger">确认删除协作主题</button>
+    </form>
+    {% endif %}
+    <p style="margin-top:12px"><a href="{{ url_for('units_page') }}">取消，← 返回</a></p>
+  </dialog>
+</div>
+{% endblock %}

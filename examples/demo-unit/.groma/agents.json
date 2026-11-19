@@ -1,0 +1,10 @@
+{
+  "agents": [
+    {
+      "attached_at": "2026-10-26T05:35:21Z",
+      "harness": "qoder",
+      "name": "qoder"
+    }
+  ],
+  "schema": 1
+}

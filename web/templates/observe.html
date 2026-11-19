@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+{# 「在不在跑」「是不是中断」由路由判一次（web/app.py: _reindex_running / _reindex_abandoned），
+   这里只许读结果，不许自己算。此前第 11 行重算了一遍「有 started_at 且没 finished_at」，
+   不带 300 秒窗，于是页面承诺一条服务端已经不再执行的护栏（R11）。中断窗也来自同一个常量。 #}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+  <h1 style="margin:0;">单机观测</h1>
+  <form method="POST" action="{{ url_for('observe_reindex') }}" style="margin:0;">
+    <button type="submit" class="ghost">🔄 重建索引与观测页</button>{{ tip("产物只在点「重建索引与观测页」时重写；没重建就一直读磁盘上这一份") }}
+  </form>
+</div>
+<div class="muted" style="margin:0 0 14px">{{ reindex_wait }}。</div>
+
+{% if running %}
+<div class="card" style="border-left:4px solid #b45309;background:#fffbeb">
+  <b>上一次重建仍在进行</b>：始于 <code>{{ reindex.started_at|local_ts }}</code>，还没有收尾。
+  {# O3（刀 V4）：行为承诺留可见面，中断窗的解释进 ⓘ——那一窗口的判据在路由里，
+     中断卡自己会说话（O4），这里重复一遍机制不产生动作。 #}
+  <div class="muted" style="margin-top:4px">{{ reindex_wait }}；再点一次不会并行跑，也不会覆盖上一次的结果。{{ tip("超过 " ~ reindex_window_min ~ " 分钟没收尾会被当成中断，届时可以重新点") }}</div>
+</div>
+{% elif abandoned %}
+<div class="card" style="border-left:4px solid #b45309;background:#fffbeb">
+  <b>上次重建未收尾（视为中断）</b>：始于 <code>{{ reindex.started_at|local_ts }}</code>，超过 {{ reindex_window_min }} 分钟没有回执。
+  {# O4（刀 V4）：可见面给"现在能做什么"，内部机制（哪一半可能没写完）折起来。 #}
+  <div class="muted" style="margin-top:4px">这一条不再拦你，可以直接重新点，重来一次是安全的。
+    <details>
+      <summary>中断的那一轮可能停在哪</summary>
+      重建是两步：先写 vault 索引，再把观测页烤成静态产物。中断可能落在两步之间，
+      于是索引是新的、观测页还是旧的——重来一次会把两边都对上。
+    </details>
+  </div>
+</div>
+{% elif reindex and reindex.finished_at %}
+<div class="card">
+  <div>上次重建：<code>{{ reindex.started_at|local_ts }}</code> 开始 → <code>{{ reindex.finished_at|local_ts }}</code> 完成，
+    用时 <b>{{ reindex.seconds }}</b> 秒，结果
+    {% if reindex.outcome == 'ok' %}<span class="badge on">成功</span>
+    {% else %}<span class="badge off">失败</span>{% endif %}</div>
+  {% if reindex.detail %}<div class="muted" style="margin-top:6px;word-break:break-all">{{ reindex.detail }}</div>{% endif %}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="err">{{ error }}</div>
+<div class="card">
+  <h2>观测页是静态产物</h2>
+  <p>重建一次：{{ reindex_wait }}。完成后页面会瞬时刷新，直到你下次点"重建"。</p>
+  {# O5（刀 V4 降级 details）：错误态要保留出口，但 CLI 手册不该铺满卡片——summary 自己说清这是干什么的。 #}
+  <details>
+    <summary>排障步骤（命令行）：先确认 vault 已初始化</summary>
+    <ol>
+      <li>确保 vault 已初始化：<code>groma vault status</code></li>
+      <li>回捞会话数据（首次）：
+        <ul>
+          <li>从数据库：<code>groma vault backfill-db --session &lt;session-key&gt;</code></li>
+          <li>从文件：<code>groma vault backfill-file --session &lt;session-key&gt; --path &lt;file&gt;</code></li>
+        </ul>
+      </li>
+      <li>点击上方「重建索引与观测页」按钮</li>
+    </ol>
+  </details>
+</div>
+{% elif artifact %}
+<div class="card">
+  <h2 style="margin-top:0">观测页产物已就绪</h2>
+  <p style="margin:0 0 12px">
+    <a class="primary" href="{{ artifact }}">打开观测页</a>
+    <span class="muted" style="margin-left:10px">同一窗口打开，产物页顶部有一条「← 返回观测台」。</span>
+  </p>
+  {% if summary %}
+  <details>
+    <summary class="muted">本次索引的四个数（会话 / 分片 / 占用 / 生成时刻）</summary>
+    <table style="margin-top:8px">
+      <tr><th style="width:22%">项目</th><th>本次的值</th></tr>
+      <tr><td class="muted">索引里的会话</td><td><b>{{ summary.sessions }}</b> 个</td></tr>
+      <tr><td class="muted">分片</td><td><b>{{ summary.shards }}</b> 个</td></tr>
+      <tr><td class="muted">正文占用</td><td>{{ summary.gb }} GB</td></tr>
+      <tr><td class="muted">索引生成时刻</td><td><code>{{ summary.generated_at|local_ts }}</code></td></tr>
+    </table>
+  </details>
+  {% else %}
+  {# O6（刀 V4）：删「免得用旧的顶上」——那是我们不给数字的理由，用户不需要读一遍设计论证才知道没数。 #}
+  <p class="muted">产物在，但读不到 vault 索引 —— 数字这次不给。</p>
+  {% endif %}
+  {# O8（刀 V4 降级 ⓘ）：这句搬到页顶重建按钮旁边（本卡开头那条 tip），产物语义跟着动作走。 #}
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">暂无观测数据</p>
+</div>
+{% endif %}
+{% endblock %}

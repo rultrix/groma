@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "groma-local"
+dynamic = ["version"]
+description = "Local-first receipts & observability runtime for AI coding agents (no network, no credentials)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "RulTrix" }]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft Windows",
+]
+
+# core 零第三方依赖（lab/__init__.py 的既有口径）；Web 层是可选 extra
+[project.optional-dependencies]
+web = ["flask>=3.0"]
+
+[project.scripts]
+groma = "lab.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lab*", "groma_shell*", "web*"]
+
+# 版本单一真相源是根目录 VERSION 文件，构建时动态读取，不在两处维护
+[tool.setuptools.dynamic]
+version = { file = ["VERSION"] }

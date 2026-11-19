@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>证据清单</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  {# E1（刀 V4 删）：这里原来第一句是「这里回答的是『这个主题由哪几段证据组成』，不是『谁和谁有关系』。」
+     那是对着一张已经下线的图辩护（K17 拆的是关系图页，见 ARCHITECTURE §4.2.2 第 1 条
+     「用户不问它——六个真实提问里没有一条是"谁和谁有关系"」）。辩护属于文档，不属于页面抬头。 #}
+  <b>{{ evidence_unit.name or evidence_unit.unit_id }}</b> ·
+  <b>{{ evidence_workspaces|length }} 个工作区</b> ·
+  <b>{{ evidence_rows|length }} 条证据</b> ·
+  {{ evidence_sessions }} 个会话（已采到的，按出处去重）。
+</div>
+
+<div class="card">
+  <table>
+    <tr>
+      <th style="width:30%">出处</th><th style="width:12%">事件</th><th style="width:14%">判定人</th>
+      <th style="width:14%">置信</th><th>信号</th>
+    </tr>
+    {% for row in evidence_rows %}
+    <tr class="evidence-row">
+      <td>
+        <a href="{{ url_for('session_page', source=row.source, path=row.path) }}">
+          <code>{{ row.source }}:{{ row.path }}</code></a>
+        {% if not row.collected %}<span class="badge off">锚点已不在 digest 里</span>{% endif %}
+      </td>
+      <td>{{ row.events if row.events is not none else "—" }}</td>
+      <td class="muted">{{ row.decided_by or "—" }}</td>
+      <td class="muted">{{ "%.2f"|format(row.confidence) if row.confidence is not none else "—" }}</td>
+      <td class="muted">{{ row.signals|join("、") if row.signals else "—" }}</td>
+    </tr>
+    {% endfor %}
+    {% if not evidence_rows %}
+    <tr><td colspan="5" class="muted">
+      这个协作主题还没有 active 证据。归类跑过之后，被选中的会话会一条条出现在这里。
+      {# E3（刀 V4 降级 details）：「撤销是事件不是删除，所以下一条也不会凭空出现」讲的是我们的存储模型，
+         用户此刻要做的动作（跑归类）已经被前半句说完了。 #}
+      <details>
+        <summary>撤销在这里是怎么起作用的</summary>
+        撤销是事件，不是删除，所以下一条也不会凭空出现。
+      </details>
+    </td></tr>
+    {% endif %}
+  </table>
+  <div class="muted" style="margin-top:10px">
+    详情页只有结构与出处，没有正文。
+    {# E4（刀 V4 删前半）：「每行都能点进会话详情」——出处那一格本来就是链接，链接自己会说话。 #}
+    工作区：<code>{{ evidence_workspaces|join("、") }}</code>
+  </div>
+</div>
+{% endblock %}

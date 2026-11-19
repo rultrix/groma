@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>会话详情</h1>
+
+<div class="card">
+  <table>
+    <tr><th style="width:130px">来源</th><td>{{ session.source }}</td></tr>
+    <tr><th>路径</th><td><code>{{ session.path }}</code></td></tr>
+    <tr><th>transcript</th><td>{{ "有" if session.get("transcript", True) else "无（仅数据库记录）" }}</td></tr>
+    <tr><th>工作目录</th><td><code>{{ session.cwd or "（会话未记录）" }}</code></td></tr>
+    <tr><th>事件</th><td>{{ session.events }}</td></tr>
+    <tr><th>transcript 行数</th><td>{{ session.transcript_lines if session.transcript_lines is not none else "—" }}</td></tr>
+    <tr><th>首条</th><td>{{ session.first_ts|local_ts("—") }}</td></tr>
+    <tr><th>末条</th><td>{{ session.last_ts|local_ts("—") }}</td></tr>
+    <tr><th>解析失败行</th><td>{{ session.parse_errors }}</td></tr>
+    <tr><th>顶层字段</th><td class="muted">{{ session["keys"]|join(", ") }}</td></tr>
+  </table>
+</div>
+
+<div class="card muted">
+  这里只有结构与出处；正文不保存。
+  {# S1（刀 V4 改写保留）：原来那句是「这里只有结构：行数、时间、字段名。正文没有被保存，所以详情页也显示不出来。」
+     前半的列举上面那张表就是它，后半"所以显示不出来"是替我们解释实现的因果句。
+     隐私承诺本身（正文不保存）一字没丢——它是这张页最该说的一句话。 #}
+</div>
+
+<p><a href="{{ url_for('evidence_page') }}">← 回到这个协作主题的证据清单</a></p>
+{% endblock %}

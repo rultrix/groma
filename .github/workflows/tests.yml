@@ -1,0 +1,32 @@
+# 全量测试（unittest discover）。
+# ✅ 已在 GitHub runner 证绿：run 44426984032 @2026-11-19，Ran 742 / OK (skipped=6) @88.6s
+# （windows-latest + py3.11.9；本地 .venv 口径 755/0/3，两侧 runner×解释器不同，skip 数不同是口径内差异）。
+# 选 windows-latest：现有 3 条 skip 是平台相关，Windows runner 与开发环境口径一致。
+# 本工作流**只跑测试**：发版（tag / zip / SHA256SUMS / Release）是 tools/release/publish.py
+# 的 --tag 显式动作，由人执行，不进 CI——公开不可逆动作不交给自动化（Owner 2026-11-19 拍板）。
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 装 Web 层依赖（core 零依赖；没装 Flask 时 test_web 整片 skip；Pillow 供品牌资产测试）
+        run: python -m pip install "flask>=3.0" pillow
+      # CI 红过一次实录（run 44252855027）：runner 的 TEMP 带 RUNNER~1 8.3 短名，同一目录
+      # 两种拼法算出两个 ws-ref，击穿 CLI 启动目录护栏——产品侧修法挂账待认领（DECISIONS.md）
+      - name: 用无 8.3 短名的临时目录
+        run: |
+          New-Item -ItemType Directory C:\groma-ci-tmp -Force | Out-Null
+          "TMP=C:\groma-ci-tmp" | Add-Content $env:GITHUB_ENV
+          "TEMP=C:\groma-ci-tmp" | Add-Content $env:GITHUB_ENV
+      - name: 全量测试（报数口径：Ran N / 通过 / skipped M，skip 不算过）
+        run: python -m unittest discover -s tests -v

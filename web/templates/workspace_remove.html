@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>移除工作区</h1>
+
+{# 刀 W10（裁定 1/2/8）：一次删干净 Groma 在这个区留下的全部关联，项目文件一律不动。
+   看着像弹层，行为仍是两步提交：这一页只读，POST 才动数据，且必须带 confirm=1。
+   零 JS 红线没动——Esc 关不掉，所以下面有可见的「取消」。 #}
+<div class="modal-veil">
+  <dialog open>
+    <div style="font-size:16px;font-weight:700">确认移除 {{ target_name }}</div>
+    <div class="muted" style="margin-top:4px"><code>{{ target }}</code></div>
+
+    <div class="muted" style="margin:14px 0 4px"><b>这些会被删</b></div>
+    <table>
+      <tr><th style="width:40%">本地证据</th><th>数量</th></tr>
+      <tr><td>扫描清单 scans</td><td>{{ stats.counts.scans }}</td></tr>
+      <tr><td>结构摘要 digests</td><td>{{ stats.counts.digests }}</td></tr>
+      <tr><td>汇总 summaries</td><td>{{ stats.counts.summaries }}</td></tr>
+      <tr><td>回执 receipts</td><td>{{ stats.counts.receipts }}</td></tr>
+      <tr><td>资产 assets</td><td>{{ stats.counts.assets }}</td></tr>
+      <tr><td><strong>合计占用</strong></td><td><strong>{{ stats.size_mb }} MB</strong></td></tr>
+    </table>
+
+    <table style="margin-top:10px">
+      <tr><th style="width:40%">Groma 的关联</th><th>内容</th></tr>
+      <tr>
+        <td>注入块所在的文件</td>
+        <td>{% if blocks %}{% for b in blocks %}<code>{{ b }}</code>{{ "、" if not loop.last }}{% endfor %}
+          {% else %}<span class="muted">没有——装载面上没有 Groma 的块</span>{% endif %}</td>
+      </tr>
+      <tr>
+        <td>身份卡</td>
+        <td><code>{{ card_path }}</code>{% if not has_card %} <span class="muted">（这个区没有卡）</span>{% endif %}
+          <div class="muted" style="margin-top:2px">它可能被你的版本库跟踪。删掉它，同一个目录以后重新加进来才不会带着旧协作主题。</div></td>
+      </tr>
+      <tr>
+        <td>会被退役的协作主题</td>
+        <td>{% if orphans %}{% for u in orphans %}<strong>{{ u.name or u.unit_id }}</strong>{{ "、" if not loop.last }}{% endfor %}
+          <div class="muted" style="margin-top:2px">这些协作主题只剩这一个工作区；工作区没了，协作主题跟着退役（记进 <code>retired-units.jsonl</code>）。</div>
+          {% else %}<span class="muted">没有——这些协作主题还有别的工作区</span>{% endif %}</td>
+      </tr>
+    </table>
+
+    <div class="muted" style="margin-top:12px">
+      项目本来的文件、Harness 的数据库与会话不会被删除。<b style="color:var(--red)">不可恢复</b>：<code>.groma/</code> 与上面列的东西一并删除，之后只能重新采集。
+    </div>
+
+    <form method="post" action="{{ url_for('workspace_remove') }}" style="margin-top:16px">
+      <input type="hidden" name="path" value="{{ target }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="danger">确认移除（不可恢复）</button>
+    </form>
+    <p style="margin-top:12px"><a href="{{ url_for('units_page') }}">取消，← 返回</a>
+      <span class="muted">（这一页可能从协作主题页或发现页进来；发现页那边是<a href="{{ url_for('discover_page') }}">这里</a>）</span></p>
+  </dialog>
+</div>
+{% endblock %}

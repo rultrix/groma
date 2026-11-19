@@ -1,0 +1,30 @@
+{
+  "agents": [
+    {
+      "attached_at": "2026-10-26T05:35:21Z",
+      "harness": "qoder",
+      "name": "qoder"
+    }
+  ],
+  "carrier": "local-directory",
+  "created_at": "2026-10-26T05:35:21Z",
+  "file_count": 2,
+  "files": [
+    {
+      "bytes": 7,
+      "path": "note.txt",
+      "sha256": "ae0666f161fed1a5dde998bbd0e140550d2da0db27db1d0e31e370f2bd366a57"
+    },
+    {
+      "bytes": 6,
+      "path": "sub/inner.txt",
+      "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060"
+    }
+  ],
+  "git_head": "453c7e6cfb5742ed381fddcb9bb5da8fc5525b8a",
+  "kind": "WB_LOCAL_RECEIPT",
+  "note": "l1 evidence fixture",
+  "schema": 1,
+  "unit_id": "unit_0aba3217f6db916d",
+  "unit_name": "demo-unit"
+}

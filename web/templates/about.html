@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>关于 {{ identity_name }}</h1>
+<div class="muted" style="margin:-8px 0 14px">这一页只讲三件事：这是什么、它在你机器上的哪里、它会做什么和不会做什么。全部现读，不写没取过的数。</div>
+
+<div class="card">
+  <table>
+    <tr><th style="width:34%">身份</th>
+        <td><b>{{ identity_name }}</b> v{{ app_version or "dev" }} · MIT 许可 · 单机运行的观测与回执工具
+          <div class="muted" style="margin-top:2px">品牌图标：{% if brand_icon %}<code>{{ brand_icon }}</code>{% else %}<b style="color:var(--red)">未接入</b>（运行 <code>tools/brand/build_icons.py</code>）{% endif %}</div></td></tr>
+    <tr><th>工作区根</th><td><code>{{ paths.workspace }}</code></td></tr>
+    <tr><th>状态根（回执、主题、更新记录）</th><td><code>{{ paths.state }}</code></td></tr>
+    <tr><th>Vault 根（会话正文）</th><td><code>{{ paths.vault }}</code></td></tr>
+    <tr><th>程序所在目录</th><td><code>{{ paths.install }}</code></td></tr>
+  </table>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h2 style="margin-top:0">它会做什么、不会做什么</h2>
+  <p style="margin:0 0 8px">{{ identity_name }} 的本地观测、回执与采集核心<b>不主动联网</b>。
+     检查更新与下载更新只在<b>你明确点击</b>后发生，只访问配置的 GitHub Release 仓库；
+     该动作不上传本机数据、不读取凭据、不发送设备标识。</p>
+  <div class="muted">会话正文、凭据、设备标识都不会出现在这一页，也不会被打包成待上传的东西。</div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h2 style="margin-top:0">更新</h2>
+  <table>
+    <tr><th style="width:34%">当前状态</th><td><b>{{ update_text }}</b></td></tr>
+    {% if has_status %}
+    <tr><th>最近一次检查</th><td><code>{{ update_checked_at }}</code></td></tr>
+    <tr><th>查询的仓库</th><td>{% if update_status.repo %}<code>{{ update_status.repo }}</code>{% else %}未配置{% endif %}
+      {% if update_status.latest %} · 最新 <code>{{ update_status.latest }}</code>{% endif %}</td></tr>
+    {% endif %}
+    <tr><th>更新仓库配置</th><td>{% if release_repo %}<code>{{ release_repo }}</code>{% else %}
+      <span class="muted">未配置</span>{% endif %}</td></tr>
+  </table>
+  <div style="margin-top:10px; display:flex; gap:10px">
+    <form method="post" action="{{ url_for('about_check_update') }}">
+      <button type="submit">检查更新</button>
+    </form>
+    {% if update_status and update_status.release_url %}
+    <form method="post" action="{{ url_for('about_open_release') }}">
+      <button type="submit">打开发布页</button>
+    </form>
+    {% else %}
+    <span class="muted" style="align-self:center">「打开发布页」要先查成一次才有目标地址——本程序不自己拼 URL。</span>
+    {% endif %}
+  </div>
+  <div class="muted" style="margin-top:8px">上面这两个按钮是这一页唯一的出网点：不点就不联网，也没有后台定时检查。</div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h2 style="margin-top:0">问题报告要点</h2>
+  <div class="muted" style="margin-bottom:6px">手动选中复制即可（这一页没有脚本，也不会替你上传任何东西）。</div>
+  <textarea readonly rows="6" style="width:100%">{{ identity_name }} {{ app_version or "dev" }}
+工作区根：{{ paths.workspace }}
+状态根：{{ paths.state }}
+Vault 根：{{ paths.vault }}
+程序目录：{{ paths.install }}
+更新状态：{{ update_text }}</textarea>
+</div>
+{% endblock %}

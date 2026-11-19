@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>采集缺口清单</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  整机口径，取数时刻 <code>{{ gap_generated_at|local_ts }}</code>。
+  这是对账，不是覆盖率——<b>分母不来自我们自己的产出</b>。
+</div>
+
+<div class="card">
+  <table>
+    <tr><th style="width:34%">分母（别人说的）</th><th style="width:22%">我们采到的</th><th>差额</th></tr>
+    <tr>
+      <td>厂商清单 <b>{{ gap_counts.vendor_db_sessions }}</b> 个会话<br>
+          <span class="muted">{{ gap_denominator.sessions }}</span></td>
+      <td>磁盘转写 <b>{{ gap_counts.transcript_files }}</b> 个文件 / {{ gap_counts.transcript_tokens }} 个会话键<br>
+          <span class="muted">{{ gap_denominator.files }}</span></td>
+      <td>漏采 <b>{{ gap_counts.missing_from_collection }}</b> · 已采 {{ gap_counts.collected }}
+          {# G2（刀 V4 降级 ⓘ）：方法论细节悬停可得；G1 那句契约（分母不来自我们自己的产出）仍在抬头可见面。 #}
+          {{ tip("digest 只当差异的另一边用，永不当分母：" ~ gap_denominator.digests) }}</td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">漏采的到底是哪些</div>
+  <table>
+    <tr><th style="width:34%">会话</th><th style="width:14%">Harness</th><th>为什么没采到</th></tr>
+    {% for row in gap_rows %}
+    <tr class="gap-row">
+      <td><code>{{ row.id }}</code></td>
+      <td class="muted">{{ row.family }}</td>
+      <td>{{ row.why }}</td>
+    </tr>
+    {% endfor %}
+    {% if not gap_rows %}
+    <tr><td colspan="3" class="muted">这一轮没有漏采：分母里的每一个会话都已在采集侧出现。</td></tr>
+    {% endif %}
+  </table>
+  {% if gap_truncated %}
+  <div class="muted" style="margin-top:8px">
+    本页最多列 20 条，还有 <b>{{ gap_truncated }}</b> 条没显示出来（总数仍是上面那个数）。
+    要全量看 <code>groma reconcile</code>。
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">采集根本身</div>
+  <table>
+    <tr><th>Harness</th><th>子路径</th><th>在不在</th><th>申报了吗</th><th>文件数</th></tr>
+    {% for root in gap_roots %}
+    <tr>
+      <td>{{ root.family }} <span class="muted">{{ root.harness }}</span></td>
+      <td><code>{{ root.subroot }}</code></td>
+      <td>{% if root.exists %}<span class="badge on">在</span>{% else %}<span class="badge off">不在</span>{% endif %}</td>
+      <td>{% if root.declared_in_include %}已申报{% else %}<b>没申报</b>{% endif %}</td>
+      <td>{{ root.files }}</td>
+    </tr>
+    {% endfor %}
+    {% if not gap_roots %}<tr><td colspan="5" class="muted">本机没有任何已知 Harness 的根——先去「发现」申报。</td></tr>{% endif %}
+  </table>
+  <div class="muted" style="margin-top:8px">
+    未分类 <b>{{ gap_counts.unclassified if gap_counts.unclassified is defined else "—" }}</b> 条；
+    存在但没申报的根 <b>{{ gap_counts.undeclared_roots }}</b> 个。
+  </div>
+</div>
+{% endblock %}

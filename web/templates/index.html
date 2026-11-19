@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>概览</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  整机口径：{{ registered|length }} 个工作区、{{ units|length }} 个协作主题。<b>协作主题是行，不是开关</b>；
+  要选工作区请去<a href="{{ url_for('discover_page') }}">发现</a>。
+</div>
+
+{% if first_run_needed %}
+{# 首启两步卡（首启引导小轮刀 W2）。四条约束住在这段里，改之前先读任务书 §2.1：
+   ① 提示式——卡不挡任何操作，也绝不进 <nav>；
+   ② 零 JS——第 2 步的门禁用 <fieldset disabled>（纯 HTML），不许用脚本切；
+   ③ 「会涨到 GB 级 / 默认落在系统盘」这句必须留在**可见面**（红线 6，由
+      test_operator_notes_that_must_stay_visible_are_not_folded 钉），可以降级的只有机制细节；
+   ④ 指路只写裸 /discover，**不带任何查询参数**——概览上出现"带 ws 参数的发现页链接"会撞
+      test_no_page_outside_discover_offers_a_workspace_switcher（那条是字面钉）。
+      本注释故意不写出那个字面串：Jinja 注释不进响应，但它一旦被复制进 `<style>` 或 HTML 注释就会进。 #}
+<div class="card firstrun">
+  <div class="muted"><b>第一次用 Groma：两步设置</b>（不挡任何操作，随时可以走开）</div>
+
+  <div style="margin-top:12px"><b>第 1 步 · 正文仓库放哪</b></div>
+  {% if vault_ok %}
+  <div class="muted" style="margin-top:4px">已确认：<code>{{ vault_root }}</code>
+    （要挪地方去<a href="{{ url_for('units_page') }}">协作主题</a>页，那一步有确认页。）</div>
+  {% else %}
+  <div style="margin:4px 0 8px">采来的会话正文都存在这里，<b>会涨到 GB 级</b>；默认落在<b>系统盘</b>，建议改到别的盘。</div>
+  <form method="post" action="{{ url_for('firstrun_vault') }}"
+        style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input name="path" value="{{ vault_root }}" required
+           style="flex:1;min-width:300px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    <button type="submit">就用这个路径</button>
+    {{ tip("改成别的路径不会当场搬：会先送你去确认页再动。移动只换位置、不删分片，中断了可以按同一目标路径重跑") }}
+  </form>
+  {% endif %}
+
+  <div style="margin-top:14px"><b>第 2 步 · 第一个要观测的项目在哪</b></div>
+  <fieldset {% if not vault_ok %}disabled{% endif %} style="margin:6px 0 0;padding:10px;border:1px solid #e2e8f0;border-radius:8px">
+    {% if not vault_ok %}<div class="muted">先定第 1 步。</div>{% endif %}
+    <div class="muted" style="margin:4px 0 8px">
+      Groma 现在只看着自己的启动目录 <code>{{ boot_root }}</code>；把真正的项目添加进来，采集才会落到它名下。
+    </div>
+    {# 刀 W8（裁定 11）：这一步问的是"第一个项目在哪个目录"，那是**登记**，不是**挂主题**——
+       所以 action 从 /units/join 换成 /workspaces/add，并且**没有** <select name="unit">。 #}
+    <form method="post" action="{{ url_for('workspaces_add') }}"
+          style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="hidden" name="from" value="index">
+      <input name="path" placeholder="项目的本地绝对路径"
+             style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+      <button type="submit">添加工作区</button>
+    </form>
+    <form method="post" action="{{ url_for('firstrun_workspace') }}" style="margin-top:8px">
+      <button type="submit" class="ghost">启动目录就是我的项目</button>
+    </form>
+  </fieldset>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="row" style="align-items:center">
+    <div style="flex:1">
+      <div class="muted">采集开关（整机一个）</div>
+      <div style="font-size:16px;font-weight:600">{{ "已暂停" if machine.paused else "采集中" }}</div>
+      <div class="muted" style="margin-top:6px">
+        间隔 {{ settings.collect_interval_minutes }} 分钟 · 上次写入 {{ last_write.created_at|local_ts("还没有跑过") }}
+        {% if not last_write.written_by %}<b>· 来源未登记</b>{% endif %}
+      </div>
+      {% if last_write.written_by %}
+      {# I3（刀 V4）：entry / trigger / pid 是给排障的人看的取证，折起来。
+         可见面仍留着「上次写入 <时刻>」——test_overview_write_line_uses_one_record 钉的就是这半句；
+         同一条测试另钉 <code>cli:new</code>，它在 details 里仍在响应体中，折叠不改它的判据。
+       I4（刀 V4）：这里原来跟在「这份 digest 没有 written_by」后面那句
+         「（0.39 产物，或绕过了登记的写入口）」是版本考古，读者是无从核对的用户——删，去处就是这条注释。 #}
+      <details class="muted">
+        <summary>写入取证</summary>
+        由 <code>{{ last_write.written_by.entry }}</code>{% if last_write.written_by.trigger %}（{{ last_write.written_by.trigger }}）{% endif %} · pid {{ last_write.written_by.pid }}
+      </details>
+      {% endif %}
+    </div>
+    <form method="post" action="{{ url_for('refresh') }}"><button type="submit">立即刷新全部</button></form>
+    {% if machine.paused %}
+    <form method="post" action="{{ url_for('resume_route') }}"><button type="submit" class="ghost">恢复采集</button></form>
+    {% else %}
+    <form method="post" action="{{ url_for('pause_route') }}"><button type="submit" class="ghost">暂停采集</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="muted">采集间隔</span>
+    <input type="number" name="interval" min="1" max="1440" value="{{ settings.collect_interval_minutes }}"
+           style="width:84px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    <span class="muted">分钟</span>
+    <button type="submit" class="ghost">保存</button>
+    {{ tip("这一份设置属于整机，不再按工作区各存一份") }}
+    {% if settings.legacy_workspace_file %}
+    <span class="badge off">旧设置文件仍在 · 已不生效</span>
+    {{ tip("不覆盖、不删除：.groma/settings.json 原样留在工作区里，只是不再读它") }}
+    {% endif %}
+  </form>
+
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
+    <span class="muted" style="min-width:64px">归类用的模型</span>
+    <input name="classify_model" value="{{ settings.classify_model or '' }}" placeholder="Qwen3.8-Flash"
+           style="width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <span class="muted" style="min-width:64px">CLI 路径</span>
+    <input name="classify_provider" value="{{ settings.classify_provider or '' }}" placeholder="留空=自动探测"
+           style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <span class="muted" style="min-width:64px">身份首行</span>
+    <input name="classify_signature" value="{{ settings.classify_signature or '' }}" placeholder="Usage: qoderclicn"
+           style="width:220px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <button type="submit" class="ghost">保存</button>
+    {{ tip("改完下一次归类就生效") }}
+    <div class="muted" style="flex-basis:100%;margin-top:2px">
+      归类链：最近一次尝试 {% if classify_status.attempt[1] %}<b>{{ classify_status.attempt[1]|local_ts }}</b>（{{ classify_status.attempt[0] }} · {{ classify_status.attempt[2] }}）{% else %}<b>从未</b>{% endif %}
+      ｜ 最近一次成功 {% if classify_status.success[1] %}<b>{{ classify_status.success[1]|local_ts }}</b>（{{ classify_status.success[0] }}）{% else %}<b>从未</b>{% endif %}
+      {% if classify_status.attempt[1] and classify_status.attempt[2] != "已应用" %}<span style="color:#b45309">—— 最近一次是失败</span>{% endif %}
+    </div>
+    <details class="muted">
+      <summary>命令行验证</summary>
+      验证 CLI 路径用 <code>groma provider check --path …</code>
+    </details>
+  </form>
+
+  {# 哨兵 auto_form：复选框不勾选时浏览器根本不发这个键，所以服务端只认
+     「本次提交带了 auto_form → 这两个布尔键按 ==on 无条件赋值」。
+     删掉它 = 两个开关永远关不掉（K2 的复选框陷阱）。 #}
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px">
+    <input type="hidden" name="auto_form" value="1">
+    <span class="muted" style="min-width:96px">花额度的自动化</span>
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input type="checkbox" name="auto_reforge" value="on" {% if settings.auto_reforge %}checked{% endif %}>自动重铸资产</label>
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input type="checkbox" name="auto_inject" value="on" {% if settings.auto_inject %}checked{% endif %}>自动投放到工作区</label>
+    <button type="submit" class="ghost">保存</button>
+    {# I8（刀 V4）：后半句原来还带「主题页会写明未传导——不用猜」。主题页自己会写（U2 保留那句，
+       由 test_theme_page_shows_the_chain_stopped 钉），跨页指路是重复；「不用猜」是设计师口吻，删。 #}
+    <span class="muted">开着时，一次归类会顺带花额度重铸资产并投放到工作区；关掉后链路停在「已归类」。</span>
+  </form>
+</div>
+
+<div class="card">
+  <table>
+    <tr><th style="width:26%">协作主题</th><th>工作区</th><th>已采</th><th>未分类</th><th>上次采集</th><th></th></tr>
+    {% for row in overview %}
+    <tr>
+      <td><strong>{{ row.name }}</strong>{% if row.org_path %}<div class="muted">{{ row.org_path }}</div>{% endif %}<div class="muted"><code>{{ row.unit_id }}</code></div></td>
+      <td>{{ row.workspaces }}</td>
+      <td><b>{{ row.collected }}</b></td>
+      <td>{{ row.unclassified }}</td>
+      <td class="muted">{{ row.last_at|local_ts("从未采集") }}</td>
+      <td><a href="{{ url_for('units_page') }}">看明细</a></td>
+    </tr>
+    {% endfor %}
+    {% if not overview %}<tr><td colspan="6" class="muted">本机还没有协作主题。去「发现」把一个工作区收进来。</td></tr>{% endif %}
+  </table>
+  {% if report %}
+  <div class="muted" style="margin-top:10px">
+    <b>漏采 {{ report.counts.missing_from_collection }}</b> = 厂商清单 {{ report.counts.vendor_db_sessions }} 条与磁盘转写 {{ report.counts.transcript_files }} 个文件里有、我们没采的部分；
+    另有 <b>{{ report.counts.undeclared_roots }}</b> 个根存在但没申报。
+    {# I10（刀 V4）：口径方法论那句降成 ⓘ，因为同一句话在缺口页是全文且在那儿才是钥匙
+       （G1 保留，由 test_gap_page_rows_equal_the_overview_number 钉）。 #}
+    {{ tip("这是对账，不是覆盖率——分母不来自我们自己的产出") }}
+    <a href="{{ url_for('gaps_page') }}">看漏采的是哪些 →</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

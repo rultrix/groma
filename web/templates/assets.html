@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>上下文资产草稿</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  按协作主题记账：一块＝一个主题，草稿都写进它自己的家。资产只含结构与出处——没有正文、没有 cwd、没有绝对路径。{{ tip("每份草稿都写进它所属协作主题的家") }}
+</div>
+
+{% for block in asset_blocks %}
+<div class="card" data-topic="{{ block.topic_id }}">
+  <div class="block-head">
+    <div class="muted">
+      <strong>{{ block.topic }}</strong>
+      {% if block.home %} · 家 <code>{{ block.home }}</code>{% else %} · <b style="color:#b45309">还没有家目录</b>{% endif %}
+      · {{ block.members }} 个工作区 · {{ block.assets|length }} 份草稿
+    </div>
+    {% if block.home %}
+    {# 刀 W27c（Owner 0.55 实测①）：原来 inline 在文字流里、白底 12px，认不出是按钮。 #}
+    <span class="block-actions">
+      <form method="post" action="{{ url_for('topic_reforge') }}">
+        <input type="hidden" name="unit" value="{{ block.topic_id }}">
+        <input type="hidden" name="from" value="assets">
+        <button type="submit" class="reforge">重铸</button>
+      </form>
+    </span>
+    {% endif %}
+  </div>
+  {% if block.assets %}
+  <table>
+    <tr><th>资产</th><th>状态</th><th>会话</th><th>事件</th><th>生成时间</th><th></th></tr>
+    {% for a in block.assets %}
+    <tr>
+      <td><strong>{{ a.title }}</strong><br><code>{{ a.asset_id }}</code></td>
+      <td><span class="badge off">{{ a.status }}</span></td>
+      <td>{{ a.totals.sessions }}</td>
+      <td>{{ a.totals.events }}</td>
+      <td class="muted">{{ a.generated_at|local_ts }}</td>
+      <td>
+        {% if block.home %}
+        <form method="post" action="{{ url_for('assets_export') }}">
+          <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
+          <input type="hidden" name="path" value="{{ block.home }}">
+          <button type="submit" class="ghost">导出 CONTEXT.md</button>
+        </form>
+        <form method="post" action="{{ url_for('unit_inject_apply') }}" style="margin-top:6px">
+          <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
+          <input type="hidden" name="path" value="{{ block.home }}">
+          {# 刀 W27a：带上这一块的主题 id，注入的作用域不再由"当前聚焦"或落点卡片推断。 #}
+          <input type="hidden" name="unit" value="{{ block.topic_id }}">
+          <button type="submit" class="ghost">注入到这里</button>
+        </form>
+        {% else %}
+        <span class="muted">先给这个协作主题指定家目录</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="muted">这个协作主题还没有资产草稿。下面勾选会话即可生成。</div>
+  {% endif %}
+</div>
+{% endfor %}
+{% if not asset_blocks %}<div class="card muted">本机还没有协作主题。先去<a href="{{ url_for('units_page') }}">协作主题</a>页建一个。</div>{% endif %}
+
+{# AS2（刀 V4）：项目所有者 拍板 3 说这段**不折叠**——「第一次要手动点一次」「没变不重铸」「绝不顶掉」
+   三句留在默认看得见的那一面（由 test_operator_notes_that_must_stay_visible_are_not_folded 钉可见面，
+   不只钉响应体）。折进 details 的是**原理**，不是结论。
+   原句里那句「（都在既有设计里，不是新规矩）」删——它对我们的设计过程说话，不对用户说话；
+   裁定与理由留在 PROPOSAL §4.5 AS2。 #}
+<div class="card muted">
+  <b>第一次要手动点一次</b>「注入到这里」，之后才会自动跟着换。
+  两条护栏：<b>没变不重铸</b>；<b>别人的资产绝不顶掉</b>。
+  <details>
+    <summary>这两条怎么起作用</summary>
+    没变不重铸——证据集一样就跳过，不会每天造一份内容相同的资产；<br>
+    别人的资产绝不顶掉——只有当这个工作区当前的注入源<b>本来就是这个协作主题自己的</b>资产时，自动重铸才会接手。
+  </details>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">从会话生成草稿</div>
+  <form method="post" action="{{ url_for('assets_build') }}">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input name="title" placeholder="资产标题（必填）" required
+             style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+      <input name="note" placeholder="备注（可选）"
+             style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    </div>
+
+    <div class="muted" style="margin:12px 0 6px">
+      勾选要作为依据的会话（本协作主题的 {{ unit_workspaces|length }} 个工作区并集，按末次活跃排序，最多 200 条）：
+    </div>
+    <div style="max-height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px">
+      {% for s in sessions[:200] %}
+      <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;font-size:13px">
+        <input type="checkbox" name="session" value="{{ s.source }}:{{ s.path }}">
+        <span style="min-width:120px">{{ s.agent_name }}</span>
+        <span class="muted" style="flex:1">{{ s.path }}</span>
+        <span class="muted">{{ s.events }} 事件{% if s.transcript is sameas false %} · 无 transcript{% endif %}</span>
+      </label>
+      {% endfor %}
+      {% if not sessions %}<div class="muted">还没有会话。先采集。</div>{% endif %}
+    </div>
+
+    <div style="margin-top:12px"><button type="submit">生成草稿</button></div>
+  </form>
+  <div class="muted" style="margin-top:8px">
+    {% if home_path %}草稿写进本协作主题的家：<code>{{ home_path }}</code>；导出前需要人工复核。
+    {% else %}这个协作主题还没有家目录——先在主题页指定一个，再回来生成草稿。{% endif %}
+  </div>
+</div>
+{% endblock %}
