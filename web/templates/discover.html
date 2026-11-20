@@ -9,7 +9,7 @@
      能力本身在「我的工作区」清单的「0 条的原因」列里，那一列才是承载。裁定与出处：PROPOSAL §4.3 D2。 #}
 </div>
 
-{# 刀 W8（裁定 4）：这一页只回答「要不要让 Groma 看着这个目录」，不再问「挂哪个主题」——
+{# 这一页只回答「要不要让 Groma 看着这个目录」，不再问「挂哪个主题」——
    后者是主题页的动作（`block.others` 在 W9 渲染）。所以这块**常驻**、不分首启态，
    表单里**没有** `<select name="unit">`，也不写作用域（添加的对象是"本机登记"，不是某个区）。 #}
 <div class="card">
@@ -24,7 +24,7 @@
 </div>
 
 {% if chosen %}
-{# 刀 W20（裁定 1/2/3/4）：切换压成一张卡——「当前查看」+ 原生下拉 + 「查看」，零 JS 的 GET 表单。
+{# 切换压成一张卡——「当前查看」+ 原生下拉 + 「查看」，零 JS 的 GET 表单。
    采集面紧跟其后（位置与区数无关）；清单置底。pills 删除（`.scope-switch`）。
    没有 chosen（空注册表）时这张卡与采集面都不渲染。 #}
 <div class="scope-bar">
@@ -41,7 +41,7 @@
   </form>
 </div>
 
-{# 刀 W16（裁定 1/3）＋ W20（裁定 5/8）：采集面三块固定顺序：
+{# 采集面三块固定顺序：
    A 本机装着的 Harness（信息块，无按钮）→ B 这个区的采集根（唯一「申报这个根」入口）
    → C 现在申报着的根（可移除）。卡头保留「申报到：<name>」；「当前作用域」那句归切换卡。 #}
 <div class="card">
@@ -49,7 +49,7 @@
     —— 以下操作写进这一个区：申报到：<b>{{ chosen_name }}</b></div>
 
   {# A · 本机装着的 Harness：只说"装了什么、这区采了多少、哪些没申报"。
-     刀 W16（裁定 3）：原来的「加入」按钮删掉——它和下面 B 表的「申报这个根」是同一个动作、
+     原来的「加入」按钮删掉——它和下面 B 表的「申报这个根」是同一个动作、
      两个名字。`candidates` 的 `declared` 只对当前选中区算，本来就只适合当信息。 #}
   <div style="margin-top:4px">
     <div class="muted" style="margin-bottom:4px"><b>本机装着的 Harness</b>（信息；申报入口在下面的采集根表里）</div>
@@ -69,7 +69,7 @@
       {% if c.exists %}
       {# D9（刀 V4 降级 title）：计数口径是溯源信息，读者是"要核对数的人"不是"要做一个动作的人"，
          所以从行内挪进行级 title=（悬停即得，纯 HTML）。出处：PROPOSAL §4.3 D9。
-         刀 W16（裁定 6）：「本主题 X / 共 Y」→「本区 X / 共 Y」——这一页按工作区不按主题。 #}
+         「本主题 X / 共 Y」→「本区 X / 共 Y」——这一页按工作区不按主题。 #}
       <div class="muted" style="margin-top:6px"
            {% if c.breakdown == 'database' %}title="计数来自 Qoder 数据库"{% elif c.breakdown == 'cwd-preview' %}title="计数来自 cwd 预览"{% endif %}>
         本区 <strong>{{ c.inside }}</strong> / 共 {{ c.total }}
@@ -151,7 +151,7 @@
 </div>
 {% endif %}
 
-{# 刀 W20（裁定 1/6/10）：清单置底。5 列与所有动作不变；移除仍在第一格，「0 条的原因」仍是最后一列
+{# 清单置底。5 列与所有动作不变；移除仍在第一格，「0 条的原因」仍是最后一列
    （既有测试取"这一行最后一个 td"，加尾列会让它读到动作格）。行链接 = 从诊断行跳到该区查看，
    可见 affordance 仍是下划线 + 「查看 ›」。 #}
 <div class="card">
@@ -163,10 +163,10 @@
       <td>
         <a href="{{ url_for('discover_page') }}?ws={{ row.path|urlencode }}" style="text-decoration:underline"><strong>{{ row.name }}</strong><span class="muted" style="font-weight:400;white-space:nowrap"> 查看 ›</span></a>
         {% if row.selected %}<span class="badge on" style="margin-left:6px">当前查看</span>{% endif %}
-        {# 刀 W3：Groma 自己的启动目录不是"项目"。新装机器上它是清单的第一行，不标注就会被当成工作区。 #}
+        {# Groma 自己的启动目录不是"项目"。新装机器上它是清单的第一行，不标注就会被当成工作区。 #}
         {% if row.is_boot_root %}<span class="badge off" style="margin-left:6px">Groma 启动目录</span>{% endif %}
         <div class="muted"><code>{{ row.path }}</code></div>
-        {# 刀 W8（裁定 4 的入口半边）：移除的入口以前只在主题页，"只登记没挂主题"的工作区在今天那页是隐形的
+        {# 移除的入口以前只在主题页，"只登记没挂主题"的工作区在今天那页是隐形的
            （裁定 3 的后果），所以每个已登记区都要能在这里被移除。放在第一格里而不是加第 6 列：
            「0 条的原因」那一列的测试取法是"取这一行最后一个 <td>"，加尾列会让那条钉子读到动作格（W4 §18 同族）。 #}
         <div style="margin-top:4px"><a class="danger" style="font-size:14px;text-decoration:none"
@@ -179,7 +179,7 @@
         {% else %}<span class="badge off">一个都没有</span>{% endif %}
       </td>
       <td class="muted">
-        {# 刀 W4：R18 补第四支 + R22 收敛。顺序按**证据从强到弱**，两句硬规矩写在注释外的判据里：
+        {# R18 补第四支 + R22 收敛。顺序按**证据从强到弱**，两句硬规矩写在注释外的判据里：
            ① 本机装着、这个区却没申报（第四支）——**只有选中行才算**。两重理由：
               取证上 `candidates` 的 `declared` 是**对着"当前查看"那一个区**算出来的（`web/app.py` 的
               `discover(chosen, [chosen.as_posix()])`），拿它去说别的行 = 界面在说没依据的话；
@@ -187,7 +187,7 @@
            ② 「归在别的工作区」这句**必须有 `outside` 才算**——原第一支在 `outside` 为 0/空时照样断言，
               那是界面在说谎（R22 的病灶，`tests/test_web.py::test_the_attribution_reason_only_appears_with_evidence` 钉住）；
            ③ 没证据那条改指向「这个区的采集面」的「本机实物」列——那一列才是承载证据的地方
-              （刀 W16：原来写"看第 ② 步"，那个块随本轮改名，指路必须跟着换）。 #}
+              。 #}
         {% set undeclared = candidates | selectattr("exists") | rejectattr("declared") | map(attribute="name") | list if row.selected else [] %}
         {% if row.collected == 0 and undeclared %}申报的根里没有 {{ undeclared | join("、") }}（本机装着），所以这区的它们永远是 0
         {% elif row.sources and row.collected == 0 and row.outside %}申报了根；{{ row.outside }} 条会话归在别的工作区

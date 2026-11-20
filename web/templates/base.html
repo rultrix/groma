@@ -34,7 +34,7 @@
   main { width:100%; min-width:0; max-width:1600px; margin:24px auto 60px; padding:0 24px; }
   h1 { font-size:22px; margin:0 0 16px; }
   .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
-  /* 刀 W10（裁定 2）：看着像弹层的确认页——`<dialog open>` ＋ 纯 CSS 遮罩，行为仍是两步提交。
+  /* 看着像弹层的确认页——`<dialog open>` ＋ 纯 CSS 遮罩，行为仍是两步提交。
      Esc 关不掉（关得掉要靠 JS），所以弹层里必须有可见的「取消」链接；零 JS 红线没动。 */
   .modal-veil { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:50;
                 display:flex; align-items:flex-start; justify-content:center; padding:40px 16px 24px; overflow:auto; }
@@ -55,13 +55,13 @@
   table { width:100%; border-collapse:collapse; font-size:14px; }
   th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-weight:600; font-size:12px; }
-  /* 只有 anywhere/break-all 参与 min-content；break-word 不参与（刀 W5 实测 739→732）*/
+  /* 只有 anywhere/break-all 参与 min-content；break-word 不参与*/
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:12px; overflow-wrap:anywhere; }
   button { background:var(--teal); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer; }
   button.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
   button.danger { background:#fff; color:var(--red); border:1px solid #fecaca; }
   a.danger { display:inline-block; background:#fff; color:var(--red); border:1px solid #fecaca; border-radius:8px; padding:7px 12px; font-size:14px; }
-  /* 刀 W27c（Owner 0.55 实测①）：块级动作要离开文字流并自带视觉差——
+  /* 块级动作要离开文字流并自带视觉差——
      白底 ghost 混在成句的灰字里，人认不出那是个按钮。 */
   .block-head { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:6px; }
   .block-actions { display:flex; gap:8px; align-items:center; }

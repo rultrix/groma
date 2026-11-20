@@ -15,7 +15,7 @@
       · {{ block.members }} 个工作区 · {{ block.assets|length }} 份草稿
     </div>
     {% if block.home %}
-    {# 刀 W27c（Owner 0.55 实测①）：原来 inline 在文字流里、白底 12px，认不出是按钮。 #}
+    {# 原来 inline 在文字流里、白底 12px，认不出是按钮。 #}
     <span class="block-actions">
       <form method="post" action="{{ url_for('topic_reforge') }}">
         <input type="hidden" name="unit" value="{{ block.topic_id }}">
@@ -45,7 +45,7 @@
         <form method="post" action="{{ url_for('unit_inject_apply') }}" style="margin-top:6px">
           <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
           <input type="hidden" name="path" value="{{ block.home }}">
-          {# 刀 W27a：带上这一块的主题 id，注入的作用域不再由"当前聚焦"或落点卡片推断。 #}
+          {# 带上这一块的主题 id，注入的作用域不再由"当前聚焦"或落点卡片推断。 #}
           <input type="hidden" name="unit" value="{{ block.topic_id }}">
           <button type="submit" class="ghost">注入到这里</button>
         </form>

@@ -9,7 +9,7 @@
 </div>
 
 {% if first_run_needed %}
-{# 首启两步卡（首启引导小轮刀 W2）。四条约束住在这段里，改之前先读任务书 §2.1：
+{# 首启两步卡。四条约束住在这段里，改动前先核对这四条：
    ① 提示式——卡不挡任何操作，也绝不进 <nav>；
    ② 零 JS——第 2 步的门禁用 <fieldset disabled>（纯 HTML），不许用脚本切；
    ③ 「会涨到 GB 级 / 默认落在系统盘」这句必须留在**可见面**（红线 6，由
@@ -41,7 +41,7 @@
     <div class="muted" style="margin:4px 0 8px">
       Groma 现在只看着自己的启动目录 <code>{{ boot_root }}</code>；把真正的项目添加进来，采集才会落到它名下。
     </div>
-    {# 刀 W8（裁定 11）：这一步问的是"第一个项目在哪个目录"，那是**登记**，不是**挂主题**——
+    {# 这一步问的是"第一个项目在哪个目录"，那是**登记**，不是**挂主题**——
        所以 action 从 /units/join 换成 /workspaces/add，并且**没有** <select name="unit">。 #}
     <form method="post" action="{{ url_for('workspaces_add') }}"
           style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">

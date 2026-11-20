@@ -10,7 +10,7 @@
      这句话没有丢：ARCHITECTURE §2.1 那张存储表里 `groma-unit.json` 的说明就是它（"Unit 身份的导出件（可提交；家目录持有）"）。 #}
 </div>
 
-{# 刀 W21a（任务书 §4.2/§4.3/§4.4）：新建卡上移到列表之前；「家」从自由文本改成
+{# 新建卡上移到列表之前；「家」从自由文本改成
    已登记工作区的下拉。零选项时不渲染表单、只给指路；0 个协作主题时补一张空态卡。 #}
 <div class="card">
   <div style="font-weight:700;margin-bottom:8px">新建一个协作主题</div>
@@ -45,7 +45,7 @@
 
 {% for block in blocks %}
 {% set unit = block.unit %}
-{# 刀 W17（裁定 7/8）：每个 block = 可见摘要行 + 一个默认收起的 `<details>`。
+{# 每个 block = 可见摘要行 + 一个默认收起的 `<details>`。
    摘要行只留：主题名 · org_path、工作区数/资产数、链路状态句、两句警告。
    管理动作（改名/组织路径/说明/工作区表/others/注入/删除）全部折进详情。
    判据用 outside_details_blocks：折叠后 assertIn 照样绿，测不出"用户看不见了"。 #}
@@ -57,7 +57,7 @@
     </div>
     <div class="muted" style="text-align:right">
       {{ block.rows|length }} 个工作区 · {{ block.assets|length }} 份资产
-      {# 刀 W27c（Owner 0.55 实测①）：重铸原来 inline 在链路句子里，白底 12px，人认不出它是按钮。
+      {# 重铸原来 inline 在链路句子里，白底 12px，人认不出它是按钮。
          现在离开文字流，放在块头右端的动作位上，并给它一个实心底（.reforge）。 #}
       <span class="block-actions">
         <form method="post" action="{{ url_for('topic_reforge') }}">
@@ -84,7 +84,7 @@
     {% if block.chain.serving|length < block.rows|length %}<span style="color:#b45309">—— 还有工作区没在跑本协作主题的资产</span>{% endif %}
   </div>
   {% endif %}
-  {# 刀 W17：退化警告原住在说明 form 下面，随 form 折进详情就等于删了，所以搬到摘要面。 #}
+  {# 退化警告原住在说明 form 下面，随 form 折进详情就等于删了，所以搬到摘要面。 #}
   {% if not block.topic or not block.topic.intent %}<div class="muted" style="margin-top:6px"><b style="color:#b45309">没有说明时自动归类会退化。</b></div>{% endif %}
   {% if block.detect_error %}<div class="err" style="margin-top:10px">{{ block.detect_error }}</div>{% endif %}
   {% if block.lost %}<div class="muted" style="margin-top:6px"><b style="color:#b45309">失联工作区：</b>{% for path in block.lost %}<code>{{ path }}</code>{% if not loop.last %}、{% endif %}{% endfor %}——登记行还在，目录已不存在；下面的「删除这个协作主题」会一并清掉这些行。</div>{% endif %}
@@ -125,7 +125,7 @@
       {# U4（刀 V4）：删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
          那是我们做这条判断时的论据，不是用户当下能核对或据以决定的东西；论据留在这里当代码注释。
          被钉的仍是前半句（test_an_empty_intent_is_announced_as_a_degradation）——
-         刀 W17 把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。 #}
+         这条把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。 #}
     </div>
 
     <table style="margin-top:12px">
@@ -221,7 +221,7 @@
       {% if not block.rows %}<tr><td colspan="6" class="muted">这个协作主题还没有本机工作区。</td></tr>{% endif %}
     </table>
 
-    {# 刀 W9（Owner 裁定 4）：挂主题的口子从发现页搬到这里——**block 就是主题**，所以每行一个 form、
+    {# 挂主题的口子从发现页搬到这里——**block 就是主题**，所以每行一个 form、
        hidden unit 恒等于本 block 的 unit_id，不放 `<select>`（裁定 4②）。
        这一块的形状由 `test_the_theme_page_offers_joining_each_registered_outsider` 按"每个实例"逐 form 判，
        发现页那边由 `test_discover_no_longer_offers_joining_a_theme` 钉它不再出现。 #}
@@ -266,8 +266,8 @@
     </form>
     {% endif %}
 
-    {# 刀 W12：删主题的入口挂在**每个 block 自己**的详情里，带上本 block 的 unit_id（不做下拉、不混选择）。
-       刀 W17（裁定 8）：从抬头移进详情，不再常驻可见面；红色分级属机会点 3，本轮不做。 #}
+    {# 删主题的入口挂在**每个 block 自己**的详情里，带上本 block 的 unit_id（不做下拉、不混选择）。
+       从抬头移进详情，不再常驻可见面；红色分级属机会点 3，本轮不做。 #}
     <div style="margin-top:14px"><a class="danger" style="padding:4px 10px;font-size:13px"
          href="{{ url_for('unit_delete_confirm', unit=block.unit_id) }}">删除这个协作主题</a></div>
   </details>
@@ -275,7 +275,7 @@
 {% endfor %}
 
 {% if dead %}
-{# 刀 W27e（Owner 令）：目录已经不存在的登记行——它既不该出现在上面的「可并入」候选表里
+{# 目录已经不存在的登记行——它既不该出现在上面的「可并入」候选表里
    （那里现在与 registered_paths() 同一把尺），也不该在界面上无处可清。
    按 项目所有者 对"没有主题的工作区不要列出来"的口味，这一节收成一行摘要＋折叠：
    它不是作用域、不是资产，是本机登记的家底。 #}
@@ -300,7 +300,7 @@
 </div>
 {% endif %}
 
-{# 刀 W21a（任务书 §4.5）：Vault 不属于任何协作主题，用一行小标题解释它为什么在最后。 #}
+{# Vault 不属于任何协作主题，用一行小标题解释它为什么在最后。 #}
 <div class="muted" style="margin:20px 0 4px"><b>本机设置（不属于任何协作主题）</b></div>
 
 {# Vault status card: implemented by the vault session (2026-11-09), not the peer. #}
