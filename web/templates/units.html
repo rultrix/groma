@@ -228,7 +228,7 @@
     {% if block.others %}
     <div class="muted" style="margin:14px 0 4px"><b>可并入这个协作主题的工作区</b></div>
     <table>
-      <tr><th style="width:47%">目录</th><th style="width:26%">它自称的协作主题</th><th style="width:27%">加入</th></tr>
+      <tr><th style="width:47%">目录</th><th style="width:26%">它自称属于哪个协作主题</th><th style="width:27%">加入</th></tr>
       {% for w in block.others %}
       <tr>
         <td><strong>{{ w.name }}</strong><br><code>{{ w.path }}</code></td>

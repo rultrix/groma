@@ -1,4 +1,4 @@
-"""刀 W25a · 品牌资产判据（B1–B4）：几何、ICO 档位、spec 接线、托盘资源解析。
+"""品牌资产判据（B1–B4）：几何、ICO 档位、spec 接线、托盘资源解析。
 
 跑法：`./.venv/Scripts/python.exe -m unittest discover -s tests -p test_brand_assets.py -v`
 """

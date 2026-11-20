@@ -151,7 +151,7 @@ def _record_run(record: dict) -> None:
 
 
 def _record_attempt(record: dict, pack: dict, model: str, state: str, **extra) -> None:
-    """失败也要入账（刀 W26a1）：账本里只有成功，就等于断链时没人能看见。"""
+    """失败也要入账：账本里只有成功，就等于断链时没人能看见。"""
     _record_run({"topic_id": record["topic_id"], "topic": record["name"], "model": model,
                  "candidates": len(pack.get("items") or []), "state": state,
                  "written": 0, **extra})
@@ -173,7 +173,7 @@ def last_runs(limit: int = 5) -> list[dict]:
 
 
 def run_summary(rows: list[dict], topic_name: str) -> dict:
-    """最后一次尝试与最后一次成功分开（刀 W26a1）。
+    """最后一次尝试与最后一次成功分开。
 
     `applied` 是唯一算成功的状态；其余（failed / unparsable / not_logged_in）
     都只是"试过"。两者同值才说明链是通的。

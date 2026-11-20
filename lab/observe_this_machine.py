@@ -168,7 +168,7 @@ def derive(doc, host_name):
     top2 = ab + ba
     pair_gap = (gap.get((a, b), 0.0) + gap.get((b, a), 0.0)) / top2 / 60.0 if top2 else 0.0
 
-    # 刀 W23c：可见的日/周文案按本机日历；绝对时刻（X 坐标、嵌入数据）仍是 UTC。
+    # 可见的日/周文案按本机日历；绝对时刻（X 坐标、嵌入数据）仍是 UTC。
     tz = local_tz()
     weeks = {}
     for c in clusters:

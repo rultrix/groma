@@ -1,4 +1,4 @@
-"""刀 W23a：`lab/timeformat.py` 的换算契约（不依赖开发机时区）。"""
+"""`lab/timeformat.py` 的换算契约（不依赖开发机时区）。"""
 
 from __future__ import annotations
 

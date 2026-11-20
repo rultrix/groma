@@ -71,7 +71,7 @@ def run(unit_root: Path, port: int = 8787) -> None:
     from lab.brand import icon_path as brand_icon_path
 
     try:
-        brand_icon_path()  # 品牌装配先判：缺图标就别先起服务再报错（刀 W25a §5.4）
+        brand_icon_path()  # 品牌装配先判：缺图标就别先起服务再报错
         ensure_unit(unit_root)  # a freshly chosen workspace has no .groma yet
         if not _claim_single_instance():
             _log("groma shell: already running for this unit")
@@ -154,7 +154,7 @@ def run(unit_root: Path, port: int = 8787) -> None:
             _log("groma shell: 打开关于页失败：%s" % exc)
 
     def check_update(icon=None, item=None):
-        """用户点一次才查一次：查完落到关于页，结果走 notice（刀 W25d）。"""
+        """用户点一次才查一次：查完落到关于页，结果走 notice。"""
         from lab import update
 
         try:

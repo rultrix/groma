@@ -295,7 +295,7 @@ def resolve_topic(value: str) -> dict | None:
 
 
 def evidence_split(topic_id: str) -> tuple[list[tuple[str, str]], dict[str, int]]:
-    """活跃证据按"还能不能引"拆成两半（刀 W26a0）。
+    """活跃证据按"还能不能引"拆成两半。
 
     存活判定只住 `lab.reconcile`，这里只调用。撤销过的键在更早一步就没了；
     这一步管的是另一种语义：键还在账上，但它对应的会话已不在 digest 引用索引里，
@@ -356,7 +356,7 @@ def reforge(root: str | Path, topic: str, title: str | None = None, note: str = 
     """Rebuild the topic's asset from live evidence, and record what was cited.
 
     引不到的键在选中前就被剔除并计数（`skipped_stale`），计数同时进返回值与账本：
-    只进返回值等于事后无法取证（刀 W26a0）。
+    只进返回值等于事后无法取证。
     """
     from .asset import build_asset
 

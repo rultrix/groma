@@ -33,7 +33,7 @@ def about_url(port: int) -> str:
 
 
 def menu_items(port: int, capture: dict) -> list[dict]:
-    """托盘菜单的形状（刀 W25c §7）：纯数据，`app.py` 只负责接到 pystray。
+    """托盘菜单的形状：纯数据，`app.py` 只负责接到 pystray。
 
     这一层存在的理由是**可测**：菜单要是只写在 `pystray.Menu(...)` 里，判据就得把 GUI 拉起来。
     `capture` 传 `status()` 的结果，暂停项的文案在这里就定下来，语义与改造前一致。

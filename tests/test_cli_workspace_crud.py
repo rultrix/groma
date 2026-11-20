@@ -1,4 +1,4 @@
-"""CLI surface for the two CRUD axes (刀 W13): add/forget a workspace, delete a theme.
+"""CLI surface for the two CRUD axes: add/forget a workspace, delete a theme.
 
 Two things are being pinned here:
 

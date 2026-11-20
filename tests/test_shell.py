@@ -94,9 +94,9 @@ class ShellTests(unittest.TestCase):
 
 
     def test_tray_menu_is_pure_data_with_about_and_update(self) -> None:
-        """刀 W25c §7：托盘五项动作必须是**纯数据**，菜单形状不许写在 pystray 调用里。
+        """§7：托盘五项动作必须是**纯数据**，菜单形状不许写在 pystray 调用里。
 
-        这条存在的原因是任务书那句硬规定——测试不许把真实 GUI 拉起来。反向钉：把
+        这条存在的原因是一条硬规定——测试不许把真实 GUI 拉起来。回归证伪：把
         `controller.menu_items()` 删回三项，本条立刻红；把「检查更新」的 action 接到启动路径，
         `test_startup_and_create_app_do_not_call_update_network` 会红（两处各管一半）。
         """

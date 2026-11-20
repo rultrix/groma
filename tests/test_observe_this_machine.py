@@ -153,7 +153,7 @@ class IntegrationTests(unittest.TestCase):
 
 
 class LocalTimeLabelTests(unittest.TestCase):
-    """刀 W23c：观测页**可见**时间按本机时区；嵌入数据仍是 UTC 原值。
+    """观测页**可见**时间按本机时区；嵌入数据仍是 UTC 原值。
 
     两个"UTC 日与本机日不同"的簇：`11/15 23:30Z` 在本机(+08:00)是 11/16（也不同 ISO 周），
     `11/09 23:30Z` 是 11/10。页脚原本烤的是 naive 本地串（无偏移），一并钉掉。

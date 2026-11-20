@@ -273,7 +273,7 @@ def remove_workspace(value: str | Path, delete_evidence: bool = False) -> dict:
         "forgotten": forgotten,
         "agents_removed": removed_agents,
         "evidence_deleted": deleted,
-        # 刀 W10：界面要说出"退役了哪些主题"。退役这件事本来就在这一函数里发生，
+        # 界面要说出"退役了哪些主题"。退役这件事本来就在这一函数里发生，
         # 让调用方另算一遍 = 两套判据，迟早对不上（确认页与实删各说各话）。
         "retired_units": [{"unit_id": item["unit_id"], "name": item.get("name")} for item in dying],
     }
@@ -303,7 +303,7 @@ def clear_workspace_unit(value: str | Path) -> bool:
 
     `remove_unit()` forgets the theme but leaves `workspaces.json` rows pointing at
     it -- and `sync_units()` rebuilds a theme from exactly that field, so a deleted
-    theme would come back on the next start. 刀 W12 clears it on the way out.
+    theme would come back on the next start; the removal path clears it on the way out.
     """
     ref = workspace_ref(value)
     data = _read(WORKSPACES, {"schema": 1, "workspaces": []})

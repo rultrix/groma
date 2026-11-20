@@ -138,24 +138,54 @@ def _wrapper_path(root: Path, kind: str = "scan") -> Path:
     return meta_dir(root) / WRAPPER_DIR / name
 
 
+LOG_SUFFIX = ".log"
+LOG_LIMIT_BYTES = 200 * 1024
+
+
 def write_wrapper(root: Path, kind: str = "scan") -> Path:
     """A script, not an inline command: unit paths may contain spaces.
 
     `scan` runs scan then digest so the chain closes on its own; `classify` runs
-    `classify` runs `topic maintain`: classify, re-forge when evidence moved, then
+    `topic maintain`: classify, re-forge when evidence moved, then
     re-point our own injection source (per settings).
+
+    每一步的 stdout/stderr 与退出码追写同目录的 `<kind>.log`。丢进
+    `nul` 的那版让夜里的 rc=2 连续六天无人知道原因——黑箱的失败不是失败，是不可诊断。
     """
     target = _wrapper_path(root, kind)
     target.parent.mkdir(parents=True, exist_ok=True)
     prefix = _launch_prefix()
     steps = ("scan", "digest") if kind == "scan" else ("topic maintain",)
     if os.name == "nt":
-        lines = ["@echo off\r\n", "set PYTHONUTF8=1\r\n"]
-        lines += ['%s --root "%s" %s >nul 2>&1\r\n' % (prefix, root, step) for step in steps]
+        log = str(target.with_suffix(LOG_SUFFIX))
+        lines = [
+            "@echo off\r\n",
+            "set PYTHONUTF8=1\r\n",
+            f'set "GROMA_LOG={log}"\r\n',
+            f'if exist "%GROMA_LOG%" for %%I in ("%GROMA_LOG%") do if %%~zI GTR {LOG_LIMIT_BYTES} '
+            'move /y "%GROMA_LOG%" "%GROMA_LOG%.prev"\r\n',
+            'echo [%date% %time%] wrapper start>>"%GROMA_LOG%"\r\n',
+        ]
+        for step in steps:
+            label = step.replace(" ", "-")
+            lines.append(f'{prefix} --root "{root}" {step} >>"%GROMA_LOG%" 2>&1\r\n')
+            # 数字紧跟 `>>` 会被 cmd 读成"重定向句柄 0"而把退出码吞掉——这个空格是判据。
+            lines.append(f'echo [%date% %time%] step={label} exit=%ERRORLEVEL% >>"%GROMA_LOG%"\r\n')
         body = "".join(lines)
     else:
-        lines = ["#!/bin/sh\n", "export PYTHONUTF8=1\n"]
-        lines += ['%s --root "%s" %s >/dev/null 2>&1\n' % (prefix, root, step) for step in steps]
+        log = str(target.with_suffix(LOG_SUFFIX))
+        lines = [
+            "#!/bin/sh\n",
+            "export PYTHONUTF8=1\n",
+            f'LOG="{log}"\n',
+            f'if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt {LOG_LIMIT_BYTES} ]; then '
+            'mv -f "$LOG" "$LOG.prev"; fi\n',
+            'echo "[$(date -u +%FT%TZ)] wrapper start" >>"$LOG" 2>&1\n',
+        ]
+        for step in steps:
+            label = step.replace(" ", "-")
+            lines.append(f'{prefix} --root "{root}" {step} >>"$LOG" 2>&1\n')
+            lines.append(f'echo "[$(date -u +%FT%TZ)] step={label} exit=$?" >>"$LOG" 2>&1\n')
         body = "".join(lines)
     target.write_text(body, encoding="utf-8", newline="")
     if os.name != "nt":

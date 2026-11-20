@@ -143,7 +143,7 @@ def set_org_path(root: str | Path, value: str) -> dict:
 def clear_link(root: str | Path) -> bool:
     """Delete every card this workspace carries; False when there was none.
 
-    Idempotent on purpose: 刀 W10 removes a workspace in one pass, and a folder
+    Idempotent on purpose: removal runs in one pass, and a folder
     that never had a card must not turn that pass into an error. Both names are
     removed so a half-migrated folder cannot resurrect the Unit through the old
     file.

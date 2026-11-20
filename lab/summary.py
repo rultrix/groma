@@ -34,7 +34,7 @@ def _parse_ts(value: str | None) -> datetime | None:
 def build_summary(root: Path, days: int = 7, tz: TZInfo | None = None) -> dict:
     """Activity for the whole Unit: the union of its workspaces' digests.
 
-    刀 W23b：**存储与排序仍是 UTC 绝对时刻，日归属按传入时区（默认本机）**。
+    **存储与排序仍是 UTC 绝对时刻，日归属按传入时区（默认本机）**。
     界面把 `newest_ts` 显示成本机时间却仍按 UTC 分日，跨午夜就会自相矛盾。
     """
     unit = load_unit(root)

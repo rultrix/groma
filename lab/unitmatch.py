@@ -322,7 +322,7 @@ def workspaces_for_unit(unit_id: str, fallback: str | Path | None = None) -> lis
 
 
 def scope_workspaces(root: str | Path | None, unit_id: str | None) -> list[str]:
-    """刀 W27a：跨区寻址的范围由"正在操作哪个协作主题"决定，不由落点目录的卡片决定。
+    """跨区寻址的范围由"正在操作哪个协作主题"决定，不由落点目录的卡片决定。
 
     成员区自带一张身份卡时，`unit_workspaces(成员)` 返回的是**它自己的**主题，
     主题的家因此看不见（真机 0.55：扇出报 `asset not found`）。

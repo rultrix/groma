@@ -224,7 +224,7 @@ class MaintainTests(RunFixture):
         self.assertEqual(result["steps"][0].get("injected"), [])
         self.assertTrue(asset.find_asset(self.root, foreign["asset_id"]))
 
-    def test_the_nightly_repoint_carries_the_theme_being_reforged(self) -> None:  # A1-6（刀 W27a）
+    def test_the_nightly_repoint_carries_the_theme_being_reforged(self) -> None:  # A1-6
         """夜间换指向时要把"正在重铸的这个主题"交给注入这一步，不能让它去问落点目录的卡。
 
         成员区自带另一张卡时，没带作用域的注入会撞 `asset not found`，而这里
@@ -262,7 +262,7 @@ if __name__ == "__main__":
 
 
 class FailureLedgerTests(RunFixture):
-    """刀 W26a1：失败也要入账，账本里只有成功就等于断链时没人看得见。"""
+    """失败也要入账：账本里只有成功，断链时就没人看得见。"""
 
     def test_a_failure_is_recorded_not_silently_dropped(self) -> None:  # A5-1
         stub = self.stub("exit /b 7")

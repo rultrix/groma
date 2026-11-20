@@ -121,7 +121,7 @@ def inject_unit(root: Path, asset_id: str, faces: list[str] | None = None,
                 allow_project_files: bool = False, unit_id: str | None = None) -> dict:
     """Write this Unit's background into the workspace's auto-loaded faces.
 
-    `unit_id` 是"正在操作的那个协作主题"（刀 W27a）。不给就是旧的 CLI 语义——
+    `unit_id` 是"正在操作的那个协作主题"。不给就是旧的 CLI 语义——
     落点目录自己的卡片；给了，资产寻址与工作区表都按那个主题走。
     """
     root = Path(root)
@@ -223,7 +223,7 @@ def gate_state(unit_id: str, asset: dict) -> dict:
     made = asset.get("generated_at") or ""
     behind = bool(newest and made and newest > made)
     narrow = bool(live) and covered * 2 < live
-    # 分母口径只在这里判一次（刀 W26d）：文案由字段生成，拼句子时不再二次推断。
+    # 分母口径只在这里判一次：文案由字段生成，拼句子时不再二次推断。
     evidence_scope = "topic" if topic_id else "unit"
     if behind and narrow:
         label = "本协作主题现况" if evidence_scope == "topic" else "本 Unit 现况"
@@ -363,7 +363,7 @@ def forget_workspace(root: Path, boot_root: Path | None = None) -> dict:
     never touched -- only what Groma wrote.
 
     Both guards live here rather than in the route so `groma workspace remove`
-    inherits them (刀 W13, 裁定 7): ① the boot root cannot be removed (it is where
+    inherits them: ① the boot root cannot be removed (it is where
     this process lives) ② the last workspace cannot be removed.
 
     Order is fixed: take our blocks out first (they name a payload that is about
@@ -423,7 +423,7 @@ def drop_unit(unit_id: str, boot_root: Path | None = None) -> dict:
         raise LabError("它是 Groma 启动目录的主题，删了下次启动会以新身份回来")
     if len(unitmatch.unit_list()) <= 1:
         raise LabError("这是本机最后一个主题，至少留一个")
-    # 一份注册表快照，paths 与 rows 都从它算（刀 W26f）：目录已经没了的登记行
+    # 一份注册表快照，paths 与 rows 都从它算：目录已经没了的登记行
     # 在 workspaces_for_unit 里是空表，但它恰恰是重启后把主题折回来的那一行。
     # 成员行的 unit_id 是它自己的卡给的，不指向本主题，所以按"路径集合"匹配，
     # 不按 unit_id 匹配——只按 unit_id 会把并入区漏掉（既有 A 类钉当场抓到）。

@@ -271,7 +271,7 @@ if __name__ == "__main__":
 
 
 class StaleEvidenceTests(IsolatedState):
-    """刀 W26a0：键还在账上、但它已不在 digest 引用索引里时，重铸要跳过并报数。"""
+    """键还在账上、但它已不在 digest 引用索引里时，重铸要跳过并报数。"""
 
     def setUp(self) -> None:
         super().setUp()

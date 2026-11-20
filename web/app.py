@@ -277,7 +277,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.template_filter("local_ts")
     def local_ts_filter(value, fallback: str = "") -> str:
-        """界面时刻：存 UTC、按本机时区显示并带该时刻的有效偏移（刀 W23a）。"""
+        """界面时刻：存 UTC、按本机时区显示并带该时刻的有效偏移。"""
         return local_text(value, fallback=fallback)
 
     @app.template_filter("local_date")
@@ -328,7 +328,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     def other_workspaces(unit_id: str) -> list[dict]:
         inside = set(unitmatch.workspaces_for_unit(unit_id))
-        # 刀 W27e：候选表与 registered_paths() 用同一把尺——目录已经不在的登记行
+        # 候选表与 registered_paths() 用同一把尺——目录已经不在的登记行
         # 不是"可并入的工作区"，它是"失效的登记"，去处在下面那一节。
         return [item for item in live_workspaces() if item["path"] not in inside]
 
@@ -408,6 +408,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             "unit_name": unit.get("name"),
             "current_unit_id": unit["unit_id"],
             "units": unitmatch.unit_list(),
+            "topics": topics.list_topics(),
             "workspaces_all": list_workspaces(),
             "workspace_root": root.as_posix(),
             "paused": machine_state()["paused"],
@@ -435,28 +436,38 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.get("/")
     def index():
-        overview = []
-        newest: dict | None = None
-        for unit in unitmatch.unit_list():
-            roots = unit.get("workspaces") or []
+        def collected_for(roots: list[str]) -> dict:
             try:
                 records = unitmatch.digest_records_for(roots)
             except LabError:
                 records = []
-            counts = topics.classification_counts(unitmatch.unit_files(records))
-            stamps = sorted(record.get("created_at") for record in records if record.get("created_at"))
-            latest = max(records, key=lambda record: record.get("created_at") or "", default=None)
+            stamps = [r.get("created_at") for r in records if r.get("created_at")]
+            return {
+                "counts": topics.classification_counts(unitmatch.unit_files(records)),
+                "last_at": max(stamps, default=None),
+                "latest": max(records, key=lambda r: r.get("created_at") or "", default=None),
+            }
+
+        # 这张表的行来自人建标签（`topics.json`），不再来自 `units.json` 的自动身份卡。
+        # 「上次写入」仍按整机口径扫所有 Unit 记录——那一行说的是这台机器最后一次写入，不是某个主题。
+        overview = []
+        for topic in topics.list_topics():
+            roots = unitmatch.workspaces_for_unit(topic["topic_id"])
+            view = collected_for(roots)
+            overview.append({
+                "unit_id": topic["topic_id"],
+                "name": topic["name"],
+                "org_path": topic.get("org_path"),
+                "workspaces": len(roots),
+                "collected": view["counts"]["collected_sessions"],
+                "unclassified": view["counts"]["unclassified"],
+                "last_at": view["last_at"],
+            })
+        newest: dict | None = None
+        for unit in unitmatch.unit_list():
+            latest = collected_for(unit.get("workspaces") or [])["latest"]
             if latest is not None and (newest is None or (latest.get("created_at") or "") > (newest.get("created_at") or "")):
                 newest = latest
-            overview.append({
-                "unit_id": unit.get("unit_id"),
-                "name": unit.get("name") or (unit.get("unit_id") or "")[:12],
-                "org_path": unit.get("org_path"),
-                "workspaces": len(roots),
-                "collected": counts["collected_sessions"],
-                "unclassified": counts["unclassified"],
-                "last_at": stamps[-1] if stamps else None,
-            })
         from lab.classify_run import STATE_TEXT, last_runs
 
         runs = last_runs(500)
@@ -517,7 +528,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             except LabError:
                 declared = []
             candidates = discover(chosen, [chosen.as_posix()])
-        # 刀 W16 修（验收 B1）：`harness_roots_for` 只遍历**已申报源**，所以零源工作区会得到
+        # `harness_roots_for` 只遍历**已申报源**，所以零源工作区会得到
         # 一张空的采集根表——而「加入」按钮已在 W16 删掉，页面上就只剩"没申报"和一个空指针。
         # 这里把"本机装着、但这个区没申报"的家族补成采集根行，让 B 表仍是每个家族唯一的申报口
         # （验收给的两条修法里选 A：候选来源补齐，而不是在 A 块再开一个按钮）。
@@ -561,7 +572,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             "discover.html",
             **context(workspace_rows=rows, chosen=chosen.as_posix() if chosen else None,
                       chosen_name=chosen.name if chosen else None,
-                      # 刀 W20：pills 收成原生下拉；`scope_selected` 仍只在本页给。
+                      # pills 收成原生下拉；`scope_selected` 仍只在本页给。
                       scope_selected=chosen.as_posix() if chosen else None,
                       scope_options=scope_options,
                       root_rows=root_rows, declared=declared, candidates=candidates),
@@ -714,7 +725,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
         """一次删干净 Groma 在这个区留下的全部关联（裁定 1/8）——项目文件一律不动。"""
         raw = (request.form.get("path") or "").strip()
         target = Path(raw).expanduser()
-        # 红线 2：破坏性动作只从确认页来。顺序按任务书 §4 W10 写死：确认门 → 启动目录 → 最后一个区 → 目录不存在。
+        # 红线 2：破坏性动作只从确认页来。顺序写死：确认门 → 启动目录 → 最后一个区 → 目录不存在。
         if (request.form.get("confirm") or "") != "1":
             return back("units_page", "移除要经过确认页：先看清会删什么，再提交")
         if not raw or not target.is_dir():
@@ -722,7 +733,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
         unit_id = current_unit()
         ref = workspace_ref(target)
         was_home = unitmatch.resolve_unit(unit_id).get("home_binding") == ref
-        # 刀 W13：两道护栏（启动目录 / 最后一个）**下沉到 `forget_workspace()`**，
+        # 两道护栏（启动目录 / 最后一个）**下沉到 `forget_workspace()`**，
         # 好让 `groma workspace remove` 自动继承——路由不再各写一遍。
         try:
             result = forget_workspace(target, boot_root)
@@ -752,7 +763,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.get("/workspaces/forget/confirm")
     def workspace_forget_page():
-        """死登记行的出口（刀 W27e）。
+        """死登记行的出口。
 
         「移除工作区」要求目录存在，而这类行的目录早就没了 ⇒ 界面上原本三条通道都够不着它。
         这一步只删注册表里的一行，不碰任何文件。
@@ -792,7 +803,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
         runs = last_runs(500)
         registry = list_workspaces()
-        # 刀 W9：others 表里"它自称的主题"要报名字而不是短码（K10(b)），
+        # others 表里"它自称的主题"要报名字而不是短码（K10(b)），
         # 名字就在下面这份 list 里，所以 0 新取数。
         unit_names = {item["unit_id"]: (item.get("name") or item["unit_id"]) for item in all_units}
         for unit in all_units:
@@ -860,7 +871,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             }
         except Exception as exc:
             vault_status = {"error": str(exc)}
-        # 刀 W21a：新建卡改「依附工作区」下拉——只列已登记且目录存在的区；
+        # 新建卡改「依附工作区」下拉——只列已登记且目录存在的区；
         # 默认项 = 当前协作主题的家（归一化比较），家不在选项里就落占位项，绝不默认第一个区。
         home_options = [item for item in list_workspaces() if Path(item["path"]).is_dir()]
         current_home = unitmatch.home_path(current_unit())
@@ -980,7 +991,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
         raw = (request.form.get("path") or "").strip()
         if not asset_id:
             return back("units_page", "请选择要注入的资产")
-        # 刀 W27a：作用域由这一块正在操作的协作主题决定，不能靠"当前聚焦"推断，
+        # 作用域由这一块正在操作的协作主题决定，不能靠"当前聚焦"推断，
         # 也不能交给落点目录自己的卡片——成员区自带一张卡时那是两个集合。
         scope = (request.form.get("unit") or "").strip() or target_unit()
         if (request.form.get("all") or "") == "1":
@@ -1146,7 +1157,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             return back("units_page", str(exc))
         if not removed:
             return back("units_page", notice="本就未并入：%s" % target.name)
-        # 刀 W11（裁定 6）：载荷还有没有来源，看这个区**还剩几个主题**——
+        # 载荷还有没有来源，看这个区**还剩几个主题**——
         # 还剩 0 个 ⇒ 摘掉；还剩别的 ⇒ 一律不动（不误伤），并且要说清"载荷仍来自旧主题"。
         binding = unitmatch.binding_id_for(target)
         rest = [row for row in list_memberships() if row.get("binding_id") == binding]
@@ -1258,7 +1269,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             if source and path:
                 selection.append((source, path))
         try:
-            # 刀 W26b：落点恒为本主题的家（一个 Unit 一个家），表单里的 path 不再参与。
+            # 落点恒为本主题的家（一个 Unit 一个家），表单里的 path 不再参与。
             home = unitmatch.home_path(target_unit())
             if not home:
                 return back("assets_page", "这个协作主题还没有家目录，先在主题页指定")
@@ -1278,7 +1289,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.post("/topic/reforge")
     def topic_reforge():
-        """主题级手动重铸：只调 topics.reforge，不另造第二条实现（刀 W26c）。"""
+        """主题级手动重铸：只调 topics.reforge，不另造第二条实现。"""
         landing = "assets_page" if (request.form.get("from") or "") == "assets" else "units_page"
         record = topics.resolve_topic(target_unit())
         if record is None:
@@ -1548,7 +1559,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.get("/about")
     def about_page():
-        """关于页：身份、本机路径、安全边界、更新状态。只读取磁盘，零 JS（刀 W25b）。
+        """关于页：身份、本机路径、安全边界、更新状态。只读取磁盘，零 JS。
 
         路径一律现读，不写未现读的常量；会话正文、凭据、设备标识一律不上这一页（§6.2 的"不得显示"）。
         """
@@ -1576,7 +1587,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.post("/about/check-update")
     def about_check_update():
-        """用户点一下才查一次 GitHub Release（刀 W25d §8.6）。
+        """用户点一下才查一次 GitHub Release。
 
         这一条路由是**唯一的网络出口触发点之一**（另一个是托盘「检查更新」）。启动路径、
         `create_app()`、其它任何 GET 都不许调到它——由 `test_startup_and_create_app_do_not_call_update_network` 钉。
@@ -1608,7 +1619,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
 
     @app.get("/favicon.ico")
     def favicon():
-        """品牌图标：文件在就发，不在就 404——不伪造空响应（刀 W25a §5.6）。"""
+        """品牌图标：文件在就发，不在就 404——不伪造空响应。"""
         from lab.brand import icon_path
 
         try:

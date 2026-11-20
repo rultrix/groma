@@ -178,5 +178,51 @@ class FreshnessTests(unittest.TestCase):
         self.assertIsNone(result["wrote_since_last_run"])
 
 
+class WrapperLogTests(unittest.TestCase):
+    """调度器不许再把失败写进垃圾桶（真机 rc=2 连续六天无人知道原因）。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self._env = {key: os.environ.get(key) for key in ("GROMA_STATE_DIR", schedule.TEST_MOCK_ENV)}
+        os.environ["GROMA_STATE_DIR"] = str(Path(self.tmp.name) / "state")
+        os.environ[schedule.TEST_MOCK_ENV] = "1"
+        self.root = Path(self.tmp.name) / "ws"
+        self.root.mkdir()
+        init_workspace(self.root, name="主题甲")
+
+    def tearDown(self) -> None:
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def _wrapper(self, kind: str) -> str:
+        # 按 kind 取段：两把 wrapper 各测各的，整文件 grep 会被同目录另一把蒙过
+        return Path(schedule.write_wrapper(self.root, kind=kind)).read_text(encoding="utf-8")
+
+    def test_no_step_output_is_thrown_away(self) -> None:
+        for kind in ("scan", "classify"):
+            body = self._wrapper(kind)
+            with self.subTest(kind=kind):
+                self.assertNotIn("nul", body.lower(), "还有输出丢进垃圾桶")
+                self.assertIn("2>&1", body, "stderr 没并进日志")
+                self.assertIn("%s%s" % (kind, schedule.LOG_SUFFIX), body, "没写进同目录的 <kind>.log")
+
+    def test_every_step_leaves_its_exit_code_in_the_log(self) -> None:
+        for kind, steps in (("scan", 2), ("classify", 1)):
+            body = self._wrapper(kind)
+            with self.subTest(kind=kind):
+                self.assertEqual(body.count("exit="), steps, "有步骤没记退出码")
+
+    def test_the_exit_code_is_not_swallowed_by_the_redirect_handle(self) -> None:
+        """`exit=%ERRORLEVEL%>>` 会让 cmd 把句柄 0 当重定向目标，退出码整个被吞（真机实测）。"""
+        if os.name != "nt":
+            self.skipTest("句柄吞字是 cmd.exe 的行为")
+        body = self._wrapper("classify")
+        self.assertIn("exit=%ERRORLEVEL% >>", body, "退出码紧跟 >> ⇒ 数字会被当成重定向句柄")
+
+
 if __name__ == "__main__":
     unittest.main()

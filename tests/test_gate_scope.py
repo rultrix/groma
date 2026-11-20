@@ -1,4 +1,4 @@
-"""刀 W26d：paused 的分母口径字段化——文案由 `evidence_scope` 生成，拼句子时不再二次推断。"""
+"""paused 的分母口径字段化：文案由 `evidence_scope` 生成，拼句子时不再二次推断。"""
 
 from __future__ import annotations
 
@@ -26,14 +26,14 @@ def _gate(topic_id):
 
 
 class GateScopeTests(unittest.TestCase):
-    def test_a_topic_asset_measures_against_the_topic(self) -> None:  # A4-1（刀 W26d）
+    def test_a_topic_asset_measures_against_the_topic(self) -> None:  # A4-1
         gate = _gate("unit_x")
         self.assertEqual(gate["state"], "paused")
         self.assertEqual(gate["evidence_scope"], "topic")
         self.assertIn("本协作主题", gate["reason"])
         self.assertNotIn("本 Unit", gate["reason"])
 
-    def test_a_hand_made_asset_still_says_unit(self) -> None:  # A4-2（刀 W26d）
+    def test_a_hand_made_asset_still_says_unit(self) -> None:  # A4-2
         gate = _gate(None)
         self.assertEqual(gate["state"], "paused")
         self.assertEqual(gate["evidence_scope"], "unit")

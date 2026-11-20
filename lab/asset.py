@@ -215,7 +215,7 @@ def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: 
 def find_asset(root: Path, asset_id: str, unit_id: str | None = None) -> Path | None:
     """The folder of an asset inside this Unit, whichever workspace built it.
 
-    刀 W27a：`unit_id` 是"正在操作的协作主题"。给了就按它的成员集找，不给才退回
+    `unit_id` 是"正在操作的协作主题"。给了就按它的成员集找，不给才退回
     `root` 自己的卡片——成员区自带一张卡时，这两种口径不是同一个集合。
     """
     roots = unitmatch.scope_workspaces(root, unit_id)

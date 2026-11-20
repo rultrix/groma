@@ -1,4 +1,4 @@
-"""刀 W25b · 关于页判据（A1–A5）。
+"""关于页判据（A1–A5）。
 
 跑法：`./.venv/Scripts/python.exe -m unittest discover -s tests -p test_about_page.py -v`
 """

@@ -1,7 +1,7 @@
 """品牌资产的位置：托盘、exe、favicon、关于页都从这一处取，不各算各的。
 
 冻结态（PyInstaller onedir）里资源在 `sys._MEIPASS` 下；源码态回仓根。缺文件**抛错**而不是
-回退到旧临时圆标——品牌接线断了属于装配缺失，静默降级会让人以为新 Logo 已生效（刀 W25a §5.4）。
+回退到旧临时圆标——品牌接线断了属于装配缺失，静默降级会让人以为新 Logo 已生效。
 """
 
 from __future__ import annotations

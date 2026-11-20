@@ -1,4 +1,4 @@
-"""刀 W25d · 更新检查判据（U1–U9，U9 = D1 兑现后的默认仓库钉）。
+"""更新检查判据（U1–U9，U9 = D1 兑现后的默认仓库钉）。
 
 全部用注入的 `fetch`，**一条都不真出网**；仓库通过 `GROMA_RELEASE_REPO` 夹具注入。
 跑法：`./.venv/Scripts/python.exe -m unittest discover -s tests -p test_update_check.py -v`

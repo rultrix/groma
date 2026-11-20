@@ -715,8 +715,66 @@ class InjectionSurfaceTests(unittest.TestCase):
         self.assertEqual(row["outside_cwds"][0]["sessions"], 1)
 
 
+class ProjectionWordbookTests(unittest.TestCase):
+    """装载面上那句主语：词与值必须同改，且不许出现工程口径的 `Unit`。
+
+    钉在真写过注入块的树上（CLAUDE.md 与 payload 两处渲染态），不钉 `project_text()`
+    的返回值——只钉函数返回，这一行漏多久都不会有人知道。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        env = mock.patch.dict(os.environ, {"GROMA_STATE_DIR": str(base / "state")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.home = base / "home"
+        self.home.mkdir()
+        init_workspace(self.home, name="两件事")
+        src = base / "src"
+        (src / "projects").mkdir(parents=True)
+        (src / "projects" / "s.jsonl").write_text(
+            '{"timestamp": "2026-11-02T09:00:00Z", "cwd": "%s"}\n' % self.home.as_posix(),
+            encoding="utf-8",
+            newline="\n",
+        )
+        add_source(self.home, "qoder", str(src), "qoder-cn", ["projects"])
+        catchup(self.home, force=True)
+        self.asset_id = build_asset(self.home, "全景", [("qoder", "projects/s.jsonl")])["asset_id"]
+
+    def _rendered(self) -> list[str]:
+        """两处装载面渲染态：项目里的标记块 ＋ hook 读的 payload。"""
+        inject_unit(self.home, self.asset_id, faces=["claude-md"], allow_project_files=True)
+        face = (self.home / "CLAUDE.md").read_text(encoding="utf-8")
+        payload = surface.payload_path(self.home).read_text(encoding="utf-8")
+        return [face, payload]
+
+    def test_no_projection_line_names_the_engineering_word(self) -> None:
+        for index, text in enumerate(self._rendered()):
+            with self.subTest(rendered=index):
+                self.assertNotIn("Unit：", text, "装载面上还有裸 `Unit`")
+                self.assertRegex(text, r"(协作主题|本机登记)：\S+ ｜ \d+ 个工作区")
+
+    def test_the_word_and_its_value_come_from_the_same_ledger(self) -> None:
+        # 无标签这一支：读 units 登记名，并显式说是"本机登记"，不冒充协作主题
+        face = self._rendered()[0]
+        self.assertIn("本机登记：两件事", face)
+        self.assertNotIn("协作主题：", face)
+
+        # 建了人建标签之后再改登记名：词换成协作主题，值必须跟着换成标签名
+        from lab import topics
+
+        unit_id = load_unit(self.home)["unit_id"]
+        topics.create_topic("两件事", intent="测试用判据")
+        unitmatch.rename_unit(unit_id, "改过的登记名")
+        again = self._rendered()[0]
+        self.assertIn("协作主题：两件事", again, "词改了值还从 units.json 取 ⇒ 两份账又错位")
+        self.assertNotIn("本机登记：改过的登记名", again)
+
+
 class InjectScopeFollowsTheThemeTests(unittest.TestCase):
-    """刀 W27a：注入的资产寻址与工作区表跟"正在操作的协作主题"走，不跟落点目录自己的卡片走。
+    """注入的资产寻址与工作区表跟"正在操作的协作主题"走，不跟落点目录自己的卡片走。
 
     真机形状（Owner 0.55 实测 @12:2x）：成员区自己有一张身份卡时，主题资产的扇出
     与单投都撞 `asset not found`——因为解析作用域取自落点目录的卡。
@@ -1452,9 +1510,9 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(summary["event_count"], 3)
 
     def test_activity_summary_groups_by_local_day(self) -> None:
-        """Y5（刀 W23b）：日期归属按本机日历；"谁更新"按绝对时刻比，不按裸串。
+        """Y5：日期归属按本机日历；"谁更新"按绝对时刻比，不按裸串。
 
-        三个**固定** instant——不用"一小时前"那种随钟表漂移的构造（任务书 §7 的 Y5 说法在
+        三个**固定** instant——不用"一小时前"那种随钟表漂移的构造（时间口径契约在
         非跨午夜时刻跑会整天空转）：
         A `23:30Z` 与 B `15:30Z` 在 UTC 同属 11-09，但在 +08:00 下分属 11-10 / 11-09；
         C `2026-11-10T04:00+08:00` 的真实时刻（20:00Z）比 A 旧，**裸串却比 A 大**——

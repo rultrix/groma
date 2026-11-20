@@ -283,6 +283,22 @@ def uses_hook(harnesses: set[str]) -> bool:
     return bool(harnesses & HOOK_HARNESSES)
 
 
+def scope_phrase(unit: dict) -> str:
+    """装载面上那句主语——词与值同源于"这块背景是谁的背景"。
+
+    界面上只有「工作区」与「协作主题」两个词，`Unit` 是工程口径不许出现在装载面；
+    而人建标签（`topics.json`）与自动身份记录（`units.json`）是两份账，取值必须跟着
+    词走：有标签就读标签，没标签才读登记名，并显式说是"本机登记"，不冒充协作主题。
+    """
+    from . import topics
+
+    unit_id = str(unit.get("unit_id") or "")
+    record = topics.topic_record(unit_id) if unit_id else None
+    if record:
+        return "协作主题：%s" % (record.get("name") or unit.get("name") or unit_id)
+    return "本机登记：%s" % (unit.get("name") or unit_id)
+
+
 def project_text(unit: dict, rows: list[dict], asset: dict, viewed_from: str) -> str:
     """The per-workspace view: the whole Unit's map, plus what this folder carries.
 
@@ -292,9 +308,9 @@ def project_text(unit: dict, rows: list[dict], asset: dict, viewed_from: str) ->
     lines = [
         "# 项目全景（Groma 生成，请勿手改本段）",
         "",
-        "Unit：%s ｜ %d 个工作区 ｜ 会话 %d · 事件 %d"
+        "%s ｜ %d 个工作区 ｜ 会话 %d · 事件 %d"
         % (
-            unit.get("name") or unit["unit_id"],
+            scope_phrase(unit),
             len(rows),
             asset.get("totals", {}).get("sessions", 0),
             asset.get("totals", {}).get("events", 0),

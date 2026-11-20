@@ -3,8 +3,9 @@
 {% block body %}
 <h1>概览</h1>
 <div class="muted" style="margin:-8px 0 14px">
-  整机口径：{{ registered|length }} 个工作区、{{ units|length }} 个协作主题。<b>协作主题是行，不是开关</b>；
-  要选工作区请去<a href="{{ url_for('discover_page') }}">发现</a>。
+  整机口径：{{ registered|length }} 个工作区、{{ topics|length }} 个协作主题。<b>协作主题不是给工作区取名</b>——
+  它至少要收进一个<b>已经采到会话</b>的工作区，没有来源就建不出资产；<b>协作主题是行，不是开关</b>，
+  没挂进主题的目录只在「工作区」那一格里计数，要处理工作区请去<a href="{{ url_for('discover_page') }}">发现</a>。
 </div>
 
 {% if first_run_needed %}
@@ -153,7 +154,7 @@
       <td><a href="{{ url_for('units_page') }}">看明细</a></td>
     </tr>
     {% endfor %}
-    {% if not overview %}<tr><td colspan="6" class="muted">本机还没有协作主题。去「发现」把一个工作区收进来。</td></tr>{% endif %}
+    {% if not overview %}<tr><td colspan="6" class="muted">本机还没有协作主题。去<a href="{{ url_for('units_page') }}">协作主题</a>页建一个，并至少给它一个已经采到会话的工作区。</td></tr>{% endif %}
   </table>
   {% if report %}
   <div class="muted" style="margin-top:10px">

@@ -294,7 +294,7 @@ if __name__ == "__main__":
 
 
 class EvidenceLivenessTests(ReconcileFixture):
-    """刀 W26a0：以证据键为输入的存活判定，三档都要有真实依据。"""
+    """以证据键为输入的存活判定，三档都要有真实依据。"""
 
     def test_three_states_from_one_pass(self) -> None:
         write_jsonl(self.projects(UUID_A))
