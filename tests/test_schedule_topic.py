@@ -217,11 +217,15 @@ class WrapperLogTests(unittest.TestCase):
                 self.assertEqual(body.count("exit="), steps, "有步骤没记退出码")
 
     def test_the_exit_code_is_not_swallowed_by_the_redirect_handle(self) -> None:
-        """`exit=%ERRORLEVEL%>>` 会让 cmd 把句柄 0 当重定向目标，退出码整个被吞（真机实测）。"""
+        """`exit=%X%>>` 会让 cmd 把句柄 0 当重定向目标，退出码整个被吞（真机实测）。"""
         if os.name != "nt":
             self.skipTest("句柄吞字是 cmd.exe 的行为")
         body = self._wrapper("classify")
-        self.assertIn("exit=%ERRORLEVEL% >>", body, "退出码紧跟 >> ⇒ 数字会被当成重定向句柄")
+        # 退出码要先 `set "RC=%ERRORLEVEL%"` 再打印：echo 一执行，%ERRORLEVEL% 就是
+        # echo 自己的 0。这条钉两件事——"数字与 >> 之间那个空格"（cmd 会把数字读成重定向句柄）、
+        # "退出码要交回给调度器"（最后一条是 echo 的话，计划任务的 Last Result 恒为 0）。
+        self.assertIn("exit=%RC% >>", body, "退出码紧跟 >> ⇒ 数字会被当成重定向句柄")
+        self.assertIn("exit /b %RC%", body, "最后一条还是 echo ⇒ 计划任务的 Last Result 恒为 0")
 
 
 if __name__ == "__main__":

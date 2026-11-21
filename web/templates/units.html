@@ -5,8 +5,8 @@
 <div class="muted" style="margin:-8px 0 16px">
   协作主题是标签，不是视角：本页把本机的协作主题一次列全，管理在各协作主题的详情里。整机数字看<a href="{{ url_for('index') }}">概览</a>，
   选工作区去<a href="{{ url_for('discover_page') }}">发现</a>。<b>不需要 GitHub，也不需要 git remote。</b>
-  作用域来源是 <code>units.json</code>{{ tip("还包含 memberships.json") }}。
-  {# U1（刀 V4）：删掉「（目录里的 groma-unit.json 只是导出件）」——实现细节，用户不据此做动作；
+  本页只列<b>你建过的协作主题</b>{{ tip("判据：units.json 里标了人建的，或 topics.json 里已有对应说明行；工作区自带的身份记录不算协作主题——它只在概览「工作区」那一格里计数") }}。
+  {# U1：删掉「（目录里的 groma-unit.json 只是导出件）」——实现细节，用户不据此做动作；
      这句话没有丢：ARCHITECTURE §2.1 那张存储表里 `groma-unit.json` 的说明就是它（"Unit 身份的导出件（可提交；家目录持有）"）。 #}
 </div>
 
@@ -77,10 +77,10 @@
     ｜ <a href="{{ url_for('evidence_page', unit=block.unit_id) }}"><b>{{ block.chain.evidence_count }}</b> 条证据</a>
     {% if not settings.auto_reforge %}<span style="color:#b45309">｜ <b>未传导（自动重铸已关）</b>{{ tip("归类结果不会自己变成资产") }}</span>{% endif %}
     {% if not settings.auto_inject %}<span style="color:#b45309">｜ <b>未投放（自动投放已关）</b>{{ tip("重铸了也不会自己投放到工作区") }}</span>{% endif %}
-    {# U2（刀 V4）：两条破折号解释进 ⓘ，状态本体留在可见面。
+    {# U2：两条破折号解释进 ⓘ，状态本体留在可见面。
        可见的第二句原样是「重铸了也不会自己投放（自动投放已关）」，这里把它压成
        「未投放（自动投放已关）」+浮窗——**契约只钉第一句**（test_theme_page_shows_the_chain_stopped
-       钉「未传导（自动重铸已关）」），第二句没有钉，改名是刀 V4 的处置，不是改契约。 #}
+       钉「未传导（自动重铸已关）」），第二句没有钉，改名只是文案处置，不是改契约。 #}
     {% if block.chain.serving|length < block.rows|length %}<span style="color:#b45309">—— 还有工作区没在跑本协作主题的资产</span>{% endif %}
   </div>
   {% endif %}
@@ -115,14 +115,14 @@
       <input name="intent" value="{{ (block.topic.intent if block.topic else '') or '' }}"
              placeholder="包含什么、明确不含什么"
              style="flex:1;min-width:320px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
-      {# U8（刀 V4）：placeholder 里那半句「——这是归类判据，不是简介；不进任何导出物」移出输入框，
+      {# U8：placeholder 里那半句「——这是归类判据，不是简介；不进任何导出物」移出输入框，
          框内只留"该写什么"。判据身份与"不进导出物"进 ⓘ（同一条 tip 宏，读屏与键盘都够得到）。 #}
       {{ tip("这是归类判据，不是简介；不进任何导出物") }}
       <button type="submit" class="ghost">保存说明</button>
     </form>
     <div class="muted" style="margin-top:4px">
       改说明只影响<b>下一次</b>归类，已入选的会话不会被重判；清空即删除判据。
-      {# U4（刀 V4）：删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
+      {# U4：删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
          那是我们做这条判断时的论据，不是用户当下能核对或据以决定的东西；论据留在这里当代码注释。
          被钉的仍是前半句（test_an_empty_intent_is_announced_as_a_degradation）——
          这条把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。 #}
@@ -232,7 +232,7 @@
       {% for w in block.others %}
       <tr>
         <td><strong>{{ w.name }}</strong><br><code>{{ w.path }}</code></td>
-        <td class="muted">{{ unit_names.get(w.unit_id) or "无身份卡" }}
+        <td class="muted">{{ unit_names.get(w.unit_id) or ("没有协作主题" if w.unit_id else "无身份卡") }}
           {% if w.unit_id %}<details><summary>详情</summary><code>{{ w.unit_id }}</code></details>{% endif %}</td>
         <td>
           <form method="post" action="{{ url_for('units_join') }}" style="display:flex;gap:6px;align-items:center">
@@ -270,6 +270,10 @@
        从抬头移进详情，不再常驻可见面；红色分级属机会点 3，本轮不做。 #}
     <div style="margin-top:14px"><a class="danger" style="padding:4px 10px;font-size:13px"
          href="{{ url_for('unit_delete_confirm', unit=block.unit_id) }}">删除这个协作主题</a></div>
+    {# 退成纯工作区：只改「它算不算一条协作主题」这一件事。与上面那条删除的区别写在确认页上——
+       那条会摘注入、删身份卡、清注册表指针；这条三样都不动。放在本 block 的详情里，带自己的 unit_id。 #}
+    <div style="margin-top:6px"><a style="padding:4px 10px;font-size:13px"
+         href="{{ url_for('unit_retire_confirm', unit=block.unit_id) }}">退成纯工作区（身份卡与说明都留）</a></div>
   </details>
 </div>
 {% endfor %}

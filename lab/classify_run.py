@@ -188,9 +188,13 @@ def run_summary(rows: list[dict], topic_name: str) -> dict:
 
 def run_all(root: Path, model: str | None = None, dry_run: bool = False,
             provider_path: str | None = None, limit: int = PROMPT_LIMIT) -> dict:
-    """Every topic that has a definition, one pass each. No definition, no call."""
+    """Every live theme that has a definition, one pass each. No definition, no call.
+
+    取数走 `declared_topics()`：退成纯工作区的主题留着那句说明是为了不丢用户写的字，
+    不是为了让它继续被跑——那是花额度。
+    """
     rows = []
-    for record in topics.list_topics():
+    for record in topics.declared_topics():
         if not str(record.get("intent") or "").strip():
             rows.append({"topic": record["name"], "state": "skipped_no_intent", "added": 0})
             continue
@@ -224,12 +228,21 @@ def maintain(root: Path, model: str | None = None, provider_path: str | None = N
     """
     from .inject import inject_unit
     from .settings import load_settings
+    from . import unitmatch
+    from .state import normalise_path
 
     settings = load_settings()
     classified = run_all(root, model=model, provider_path=provider_path, limit=limit)
+    here = normalise_path(root)
     steps = []
-    for record in topics.list_topics():
+    for record in topics.declared_topics():
         topic_id = record["topic_id"]
+        # 重铸是主题级操作，只该由主题的家去跑。非家工作区的夜间任务照常归类，
+        # 但重铸与换注入一律不动：成员区跑出来的资产会落在别人家门口，两条任务还会抢同一批文件。
+        home = unitmatch.home_path(topic_id)
+        if not home or normalise_path(home) != here:
+            steps.append({"topic": record["name"], "state": "not_home", "home": home})
+            continue
         active = _active_keys(topic_id)
         served = _served_keys(topic_id)
         if not active:

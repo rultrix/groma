@@ -4,7 +4,7 @@
 <h1>发现</h1>
 <div class="muted" style="margin:-8px 0 14px">
   <b>作用域只在这一页生效</b>：先选一个工作区，再看它的采集面；概览 / 活动 / 观测是整机口径，不受这里影响。
-  {# D2（刀 V4 删）：原来这里还有一句「0 条会话在这里要能说出是哪一种 0——真没有 / 根没申报 /
+  {# D2：原来这里还有一句「0 条会话在这里要能说出是哪一种 0——真没有 / 根没申报 /
      报了根却归不到任何工作区」。那是设计目标自述，说给用户听不产生任何动作；
      能力本身在「我的工作区」清单的「0 条的原因」列里，那一列才是承载。裁定与出处：PROPOSAL §4.3 D2。 #}
 </div>
@@ -67,7 +67,7 @@
         </div>
       </div>
       {% if c.exists %}
-      {# D9（刀 V4 降级 title）：计数口径是溯源信息，读者是"要核对数的人"不是"要做一个动作的人"，
+      {# D9（降级 title）：计数口径是溯源信息，读者是"要核对数的人"不是"要做一个动作的人"，
          所以从行内挪进行级 title=（悬停即得，纯 HTML）。出处：PROPOSAL §4.3 D9。
          「本主题 X / 共 Y」→「本区 X / 共 Y」——这一页按工作区不按主题。 #}
       <div class="muted" style="margin-top:6px"
@@ -90,7 +90,7 @@
       {% endif %}
     </div>
     {% endfor %}
-    {# D11（刀 V4 降级 details）：窄功能的实现说明，不该占着一行常驻。summary 自己说清"这是什么"。 #}
+    {# D11（降级 details）：窄功能的实现说明，不该占着一行常驻。summary 自己说清"这是什么"。 #}
     <details class="muted" style="margin-top:8px">
       <summary>子 Agent 的支持范围</summary>
       子 Agent 只在 qoder-cn 支持，配置来自工作区的 <code>.qoder/agents/*.md</code>。
@@ -165,6 +165,9 @@
         {% if row.selected %}<span class="badge on" style="margin-left:6px">当前查看</span>{% endif %}
         {# Groma 自己的启动目录不是"项目"。新装机器上它是清单的第一行，不标注就会被当成工作区。 #}
         {% if row.is_boot_root %}<span class="badge off" style="margin-left:6px">Groma 启动目录</span>{% endif %}
+        {# 躺在系统临时目录下的登记行＝某个脚本把沙箱打进真状态目录了。
+           登记那一步现在会拒这一形，这枚 badge 是给已经混进来的存量行的说明，去处就是下面那个「移除」。 #}
+        {% if row.is_temp %}<span class="badge off" style="margin-left:6px">临时目录</span>{% endif %}
         <div class="muted"><code>{{ row.path }}</code></div>
         {# 移除的入口以前只在主题页，"只登记没挂主题"的工作区在今天那页是隐形的
            （裁定 3 的后果），所以每个已登记区都要能在这里被移除。放在第一格里而不是加第 6 列：

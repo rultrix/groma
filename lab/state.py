@@ -152,7 +152,34 @@ def agent_id_for(external_key: str) -> str:
 # -- workspaces -------------------------------------------------------------
 
 
-def register_workspace(path: str | Path, name: str | None = None) -> dict:
+def ephemeral_root(path: str | Path) -> bool:
+    """这个目录是不是躺在系统临时目录下。
+
+    判据只在这里写一份：登记那一步用它拒，发现页那枚 badge 也用它——
+    两边各写一遍的话，界面上亮着的范围和真正挡住的范围迟早会对不上。
+    """
+    import tempfile
+
+    base = os.path.normcase(str(Path(tempfile.gettempdir()).resolve()))
+    try:
+        target = os.path.normcase(str(Path(path).resolve()))
+    except OSError:
+        return False
+    return target == base or target.startswith(base + os.sep)
+
+
+def register_workspace(path: str | Path, name: str | None = None,
+                       allow_ephemeral: bool = False) -> dict:
+    if not allow_ephemeral and not os.environ.get("GROMA_STATE_DIR") and ephemeral_root(path):
+        from .workspace import LabError  # 延迟导入：workspace 模块本身依赖本模块
+
+        raise LabError(
+            "这个目录在系统临时目录下（%s），不当作工作区登记。\n"
+            "临时目录通常是某个脚本自己的沙箱，登记进来会把工作区清单与"
+            "「可并入协作主题」的候选表都污染掉；要清掉已经混进来的行，去发现页那一行按「移除」。\n"
+            "确实想把临时目录当工作区（例如你在演练迁移）：命令行加 --allow-ephemeral。"
+            % Path(path).as_posix()
+        )
     ref = workspace_ref(path)
     link = unitlink.read_link(path) or {}
     unit_id = link.get("unit_id")
@@ -444,8 +471,14 @@ def upsert_unit(
     org_path: str | None = None,
     home_binding: str | None = None,
     created_at: str | None = None,
+    origin: str | None = None,
 ) -> dict:
-    """Create or patch a Unit record. `unit_id` is never regenerated here."""
+    """Create or patch a Unit record. `unit_id` is never regenerated here.
+
+    `origin` 记的是"这条记录怎么来的"（`human`＝人在界面上建的）。缺省**不落这个字段**：
+    折身份卡那条路（开机与 `unit list`）也走本函数，给它一个缺省值等于把机器折出来的行
+    标成"人建的"，而那正是这个字段要区分开的东西。
+    """
     if not unit_id:
         raise ValueError("unit_id is required")
     data = _read(UNITS, {"schema": 1, "units": []})
@@ -471,6 +504,8 @@ def upsert_unit(
         if created_at is not None:
             record["created_at"] = created_at
         record["updated_at"] = now
+    if origin is not None:
+        record["origin"] = origin
     _write(UNITS, data)
     return record
 

@@ -61,6 +61,11 @@ SURFACES = {
 # Qoder 不靠块面：Groma 生成的 hook 直接读 payload，项目里不多写一个文件。
 HOOK_HARNESSES = {"qoder-cn", "qoder"}
 
+# 载荷引文的段级预算（先到先得，整条退出不截断）：
+# 条数上限与字符上限都远小于 hook 的 60000 字符跳过线，是构造性保证。
+CLAIM_MAX_ITEMS = 10
+CLAIM_MAX_CHARS = 8000
+
 
 def block_of(unit_id: str, asset_id: str, body: str) -> str:
     """渲染标记块。块内不写任何本机指纹，见模块 docstring。"""
@@ -287,14 +292,15 @@ def scope_phrase(unit: dict) -> str:
     """装载面上那句主语——词与值同源于"这块背景是谁的背景"。
 
     界面上只有「工作区」与「协作主题」两个词，`Unit` 是工程口径不许出现在装载面；
-    而人建标签（`topics.json`）与自动身份记录（`units.json`）是两份账，取值必须跟着
-    词走：有标签就读标签，没标签才读登记名，并显式说是"本机登记"，不冒充协作主题。
+    而"算不算协作主题"只许问一处（`unitmatch.is_theme`），否则会出现
+    「主题页已经不再列它、装载面还替它报协作主题」——退成纯工作区正是这个形状。
+    是主题就读人建标签的名；不是才读登记名，并显式说是"本机登记"。
     """
-    from . import topics
+    from . import topics, unitmatch
 
     unit_id = str(unit.get("unit_id") or "")
     record = topics.topic_record(unit_id) if unit_id else None
-    if record:
+    if record and unitmatch.is_theme(unit):
         return "协作主题：%s" % (record.get("name") or unit.get("name") or unit_id)
     return "本机登记：%s" % (unit.get("name") or unit_id)
 
@@ -346,4 +352,16 @@ def project_text(unit: dict, rows: list[dict], asset: dict, viewed_from: str) ->
     notes = (asset.get("notes") or "").strip()
     if notes:
         lines += ["## 备注", "", notes, ""]
+    claims = asset.get("claims") or []
+    if claims:
+        # 引文有预算而不是截断：hook 对超长载荷是整段跳过（超 60000 字符什么都不投），
+        # 一段塞爆等于把全部背景掐死。先到先得，放不下的整条退出，只留「另见」。
+        from . import anchors
+
+        rendered, omitted = anchors.render_claims(claims, max_items=CLAIM_MAX_ITEMS,
+                                                  max_chars=CLAIM_MAX_CHARS)
+        if rendered:
+            lines += ["## 结论与引文", ""] + rendered
+            if omitted:
+                lines += ["", "另见 CONTEXT.md：还有 %d 条结论未入载荷（预算内放不下或未核对）。" % omitted]
     return "\n".join(lines)

@@ -16,7 +16,7 @@
       <td>磁盘转写 <b>{{ gap_counts.transcript_files }}</b> 个文件 / {{ gap_counts.transcript_tokens }} 个会话键<br>
           <span class="muted">{{ gap_denominator.files }}</span></td>
       <td>漏采 <b>{{ gap_counts.missing_from_collection }}</b> · 已采 {{ gap_counts.collected }}
-          {# G2（刀 V4 降级 ⓘ）：方法论细节悬停可得；G1 那句契约（分母不来自我们自己的产出）仍在抬头可见面。 #}
+          {# G2（降级 ⓘ）：方法论细节悬停可得；G1 那句契约（分母不来自我们自己的产出）仍在抬头可见面。 #}
           {{ tip("digest 只当差异的另一边用，永不当分母：" ~ gap_denominator.digests) }}</td>
     </tr>
   </table>

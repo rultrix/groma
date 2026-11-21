@@ -73,14 +73,14 @@
   main a:not(.primary):not(.danger):visited { color:var(--teal); }
   main a:not(.primary):not(.danger):hover { filter:brightness(.9); }
   main a:not(.primary):not(.danger):focus-visible { outline:2px solid var(--teal); outline-offset:2px; }
-  /* ⓘ 承载（刀 V4；PROPOSAL §4.0 承载一）。四处要一起看：
+  /* ⓘ 承载（PROPOSAL §4.0 承载一）。四处要一起看：
      ① 只写 :hover 就是 hover-only——键盘够不到，所以 tabindex="0" 配 :focus/:focus-visible 两条都留；
      ② 浮窗文本走 data-tip + attr()（纯 CSS，零 JS），同时调用点必须再给 title 与 aria-label，
         否则读屏拿到的是一个光秃秃的圆圈；
      ③ 这里的注释会进**每一页**的响应字节，所以任何页面级 assertNotIn 都会把它算进断言面——
         不要往这段里抄被删掉的界面原话；
      ④ 隐藏态必须是 display:none，不能只 opacity:0 或只 visibility:hidden。
-        刀 V5 复量查出来的：绝对定位的 ::after **照样参与可滚动区域**，透明不等于不占位——
+        真机复量查出来的：绝对定位的 ::after **照样参与可滚动区域**，透明不等于不占位——
         900 宽下概览页 scrollWidth 1050，把 .hint 摘掉是 885（+165 是一条看不见也摸不着的死滚动）。
         换成 display:none 后同一处量到 885。 */
   .hint { display:inline-block; position:relative; cursor:help; color:var(--muted); border:1px solid var(--line);
@@ -118,7 +118,7 @@
 </header>
 <main>
   <div class="strip">
-    <span class="chip">工作区 <b>{{ registered|length }}</b> ｜ 协作主题 <b>{{ units|length }}</b></span>
+    <span class="chip">工作区 <b>{{ registered|length }}</b> ｜ 协作主题 <b>{{ themes|length }}</b></span>
     {% if paused %}<span class="chip warn">已暂停</span>{% else %}<span class="chip">采集中</span>{% endif %}
     {% if report %}
     <span class="chip">已采 <b>{{ report.counts.collected }}</b></span>

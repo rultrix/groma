@@ -49,6 +49,14 @@
           <input type="hidden" name="unit" value="{{ block.topic_id }}">
           <button type="submit" class="ghost">注入到这里</button>
         </form>
+        {% if a.claims %}
+        <div class="muted" style="margin-top:6px">引文 {{ a.claims|length }} 条（{{ a.claims|selectattr("state","equalto","verified")|list|length }} 有效）</div>
+        <form method="post" action="{{ url_for('assets_verify') }}" style="margin-top:4px">
+          <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
+          <input type="hidden" name="path" value="{{ block.home }}">
+          <button type="submit" class="ghost">核对锚点</button>
+        </form>
+        {% endif %}
         {% else %}
         <span class="muted">先给这个协作主题指定家目录</span>
         {% endif %}
@@ -63,7 +71,7 @@
 {% endfor %}
 {% if not asset_blocks %}<div class="card muted">本机还没有协作主题。先去<a href="{{ url_for('units_page') }}">协作主题</a>页建一个。</div>{% endif %}
 
-{# AS2（刀 V4）：项目所有者 拍板 3 说这段**不折叠**——「第一次要手动点一次」「没变不重铸」「绝不顶掉」
+{# AS2：项目所有者 拍板 3 说这段**不折叠**——「第一次要手动点一次」「没变不重铸」「绝不顶掉」
    三句留在默认看得见的那一面（由 test_operator_notes_that_must_stay_visible_are_not_folded 钉可见面，
    不只钉响应体）。折进 details 的是**原理**，不是结论。
    原句里那句「（都在既有设计里，不是新规矩）」删——它对我们的设计过程说话，不对用户说话；
@@ -109,5 +117,30 @@
     {% if home_path %}草稿写进本协作主题的家：<code>{{ home_path }}</code>；导出前需要人工复核。
     {% else %}这个协作主题还没有家目录——先在主题页指定一个，再回来生成草稿。{% endif %}
   </div>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">给草稿落一条引文（人工档）</div>
+  <div class="muted" style="margin-bottom:8px">
+    人给「结论句 + 会话键 + 时间区间」，工具只做定位、核对、渲染。落锚前整批核对——任何一条对不上，资产一个字节都不改。
+    会话键形如 <code>qoder:0f06e741-…</code>（vault 索引里的键）；时间区间用 UTC，如 <code>2026-11-20T03:11:02Z</code>。
+  </div>
+  <form method="post" action="{{ url_for('assets_anchor') }}">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <input name="asset_id" placeholder="asset id（必填）" required
+             style="flex:1;min-width:220px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+      <input name="title" placeholder="结论句（必填）" required
+             style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input name="session_key" placeholder="会话键（必填）" required
+             style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+      <input name="from_ts" placeholder="起始 UTC（必填）" required
+             style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+      <input name="to_ts" placeholder="截止 UTC（必填）" required
+             style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    </div>
+    <div style="margin-top:12px"><button type="submit">落锚</button></div>
+  </form>
 </div>
 {% endblock %}

@@ -260,20 +260,72 @@ def vendor_universe(roots: list[dict]) -> dict:
     return {"sessions": sessions, "databases": databases}
 
 
+def identity_of(row: dict) -> tuple[str, str]:
+    """(harness family, session token) -- the pair a ledger key and a digest row must agree on.
+
+    The source name is a display label a user may rename (`qoder` ->
+    `qoder-projects`); it is never half of an identity. The digest's own
+    `session_key` is preferred, because a file name alone can be a capture
+    timestamp (see `token_of_file`).
+    """
+    key = str(row.get("session_key") or "")
+    if ":" in key:
+        family, token = key.split(":", 1)
+        return family_of(family), token
+    token = token_of_file(Path(str(row.get("path") or "x")))
+    return family_of(row.get("harness") or row.get("source")), token
+
+
 def _collected_from_records(records: list[dict]) -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {}
     for record in records:
         for row in record.get("files") or []:
-            key = str(row.get("session_key") or "")
-            if ":" in key:
-                family, token = key.split(":", 1)
-                family = family_of(family)
-            else:
-                token = token_of_file(Path(str(row.get("path") or "x")))
-                family = family_of(row.get("harness") or row.get("source"))
+            family, token = identity_of(row)
             if token:
                 out[token] = (family, str(row.get("source") or ""))
     return out
+
+
+def citation_index_for(folders: list[Path]) -> dict[str, list[dict]]:
+    """What may be cited, keyed by the session id -- never by the source label.
+
+    A row's `source` survives into the citation as the label the digest holds
+    *today* -- after a rename the asset must say `qoder-projects`, not the
+    ledger's older `qoder`. Their `family` rides along so a lookup can refuse a
+    cross-harness collision. Records arrive newest-first, so the first row seen
+    for an identity wins.
+    """
+    out: dict[str, list[dict]] = {}
+    records = unitmatch.digest_records_for([str(Path(folder)) for folder in folders])
+    for record in records:
+        for row in record.get("files") or []:
+            family, token = identity_of(row)
+            if not token:
+                continue
+            bucket = out.setdefault(token, [])
+            if any(item.get("family") == family for item in bucket):
+                continue
+            bucket.append({**row, "digest": record.get("digest_name"), "family": family})
+    return out
+
+
+def resolve_citation(index: dict[str, list[dict]], key: tuple[str, str]) -> dict | None:
+    """A ledger key `(source, path)` resolved against the citation index.
+
+    The family comes from the source *only when the source is a known harness*;
+    a user may name a collection source anything (`src`), and that name cannot
+    decide an identity. In that case the session id alone is the identity -- and
+    only when it is unambiguous.
+    """
+    source, path = key
+    family = family_of(source)
+    candidates = index.get(token_of_file(Path(str(path)))) or []
+    for row in candidates:
+        if row.get("family") == family:
+            return row
+    if family not in set(FAMILIES.values()) and len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def collected_tokens(unit_root: Path) -> dict[str, tuple[str, str]]:

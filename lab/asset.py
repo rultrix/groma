@@ -10,8 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from . import unitmatch
-from .digest import normalise_session_id
+from . import anchors, reconcile, unitmatch
 from .state import workspace_ref
 from .workspace import LabError, load_unit, meta_dir, read_json, utc_stamp, write_json
 
@@ -35,10 +34,7 @@ def session_id_of(item: dict) -> str:
     hand codex sessions their whole file name (`rollout-2026-08-10T17-34-36-019f…`),
     which is a capture timestamp wearing an identity.
     """
-    key = item.get("session_key") or ""
-    if ":" in key:
-        return key.split(":", 1)[1]
-    return normalise_session_id(Path(item["path"]).name)
+    return reconcile.identity_of(item)[1]
 
 
 def _asset_id(ws_ref: str, keys: list[tuple[str, str]], title: str) -> str:
@@ -73,6 +69,19 @@ def _render_readme(asset: dict) -> str:
         )
     if asset.get("notes"):
         lines += ["", "## 备注", "", asset["notes"]]
+    if asset.get("claims"):
+        lines += [
+            "",
+            "## 引用的结论",
+            "",
+            "正文只随锚点逐条存放（见 asset.json 的 `claims[].quote` 与锚点哈希）；README 只列结论与出处：",
+            "",
+        ]
+        for claim in asset["claims"]:
+            state = "已核对" if claim.get("state") == "verified" else "未核对（stale）"
+            lines.append("- %s ｜ %s ｜ %s → %s ｜ sha256 `%s`"
+                         % (claim["title"], state, claim["from_ts"], claim["to_ts"],
+                            claim["quote_sha256"][:12]))
     lines += [
         "",
         "## 边界",
@@ -84,28 +93,40 @@ def _render_readme(asset: dict) -> str:
     return "\n".join(lines)
 
 
-def _render_validation() -> str:
-    return "\n".join(
-        [
-            "# 验证状态",
-            "",
-            "- 生成：draft（由 Groma 自动生成）",
-            "- 人工复核：未进行",
-            "- 内容留存：无（只保存结构与出处）",
-            "",
-            "## 已具备",
-            "",
-            "- 来源会话可在本地 digest 中定位（见 asset.json 的 digest 与 sha256）",
-            "- 每个文件有 sha256（见 manifest.json）",
-            "",
-            "## 未验证",
-            "",
-            "- 结论是否正确：未评估",
-            "- 是否被 Agent 使用：未证明",
-            "- 是否产生效果：未评估",
-            "",
-        ]
-    )
+def _render_validation(asset: dict) -> str:
+    lines = [
+        "# 验证状态",
+        "",
+        "- 生成：draft（由 Groma 自动生成）",
+        "- 人工复核：未进行",
+        "- 内容留存：无（只保存结构与出处）" if not asset.get("claims")
+        else "- 内容留存：仅 claims[].quote（逐条带锚点）",
+        "",
+        "## 已具备",
+        "",
+        "- 来源会话可在本地 digest 中定位（见 asset.json 的 digest 与 sha256）",
+        "- 每个文件有 sha256（见 manifest.json）",
+    ]
+    if asset.get("claims"):
+        lines += ["", "## 锚点核对", ""]
+        for claim in asset["claims"]:
+            if claim.get("state") == "verified":
+                lines.append("- ✅ `%s` %s → %s（sha256 `%s`）"
+                             % (claim["session_key"], claim["from_ts"], claim["to_ts"],
+                                claim["quote_sha256"][:12]))
+            else:
+                lines.append("- ⚠️ `%s` **未核对（stale）**：%s"
+                             % (claim["session_key"], claim.get("stale_reason") or "源已漂移"))
+    lines += [
+        "",
+        "## 未验证",
+        "",
+        "- 结论是否正确：未评估",
+        "- 是否被 Agent 使用：未证明",
+        "- 是否产生效果：未评估",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: str = "") -> dict:
@@ -121,19 +142,15 @@ def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: 
     paths = unitmatch.digest_paths_for(roots)
     if not paths:
         raise LabError("no digest yet; run `groma catchup` first")
-    records = unitmatch.digest_records_for(roots)
     digest_sha = {path.name: _sha256(path) for path in paths}
-
-    index: dict[tuple[str, str], dict] = {}
-    for record in records:
-        for item in record.get("files", []):
-            key = (item["source"], item["path"])
-            index.setdefault(key, {**item, "digest": record["digest_name"]})
+    # 身份是会话（家族＋id），不是采集源的显示名：源改名后账本里的旧键仍要引得到，
+    # 而引用里写的是 digest 现持的标签。派生只住 reconcile 一处。
+    index = reconcile.citation_index_for([Path(item) for item in roots])
 
     keys = sorted(set(selection))
     chosen = []
     for key in keys:
-        item = index.get(key)
+        item = reconcile.resolve_citation(index, key)
         if item is None:
             raise LabError("session not in this Unit's digests: %s:%s" % key)
         chosen.append(item)
@@ -195,21 +212,27 @@ def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: 
         "sessions": sessions,
         "totals": {"sessions": len(sessions), "events": sum(item["events"] for item in sessions)},
         "content_stored": False,
+        "profile": "index-only",
         "notes": note or "",
     }
 
     target = meta_dir(root) / ASSETS_DIR / asset_id
     target.mkdir(parents=True, exist_ok=True)
-    write_json(target / "asset.json", asset)
-    (target / "README.md").write_text(_render_readme(asset), encoding="utf-8", newline="\n")
-    (target / "VALIDATION.md").write_text(_render_validation(), encoding="utf-8", newline="\n")
+    _write_folder(target, asset)
+    return asset
 
+
+def _write_folder(folder: Path, asset: dict) -> None:
+    """Write the four-piece folder from an asset dict. The manifest lists the
+    other three files with their sha256, so it is always written last."""
+    write_json(folder / "asset.json", asset)
+    (folder / "README.md").write_text(_render_readme(asset), encoding="utf-8", newline="\n")
+    (folder / "VALIDATION.md").write_text(_render_validation(asset), encoding="utf-8", newline="\n")
     files = []
     for name in ("asset.json", "README.md", "VALIDATION.md"):
-        path = target / name
+        path = folder / name
         files.append({"path": name, "bytes": path.stat().st_size, "sha256": _sha256(path)})
-    write_json(target / "manifest.json", {"schema": 1, "asset_id": asset_id, "files": files})
-    return asset
+    write_json(folder / "manifest.json", {"schema": 1, "asset_id": asset["asset_id"], "files": files})
 
 
 def find_asset(root: Path, asset_id: str, unit_id: str | None = None) -> Path | None:
@@ -247,3 +270,86 @@ def list_assets(root: Path) -> list[dict]:
         if current is None or (asset.get("generated_at") or "") > (current.get("generated_at") or ""):
             found[asset["asset_id"]] = asset
     return sorted(found.values(), key=lambda item: item.get("generated_at") or "", reverse=True)
+
+
+def attach_claims(root: Path, asset_id: str, claims: list[dict], unit_id: str | None = None,
+                  vault_root: Path | None = None) -> dict:
+    """Upgrade an asset to `claim-anchored` with human-supplied claims.
+
+    Each claim is `{title, session_key, from_ts, to_ts}`; this locates the span
+    in the vault, hashes the quote, and writes the claim into `asset.json`.
+    Verification happens for ALL claims before ANY byte is written: a batch with
+    one bad window is refused whole (a half-verified asset is worse than a
+    refused one), and the vault itself is never written to.
+
+    Re-attaching replaces the claim with the same (session_key, from_ts, to_ts)
+    and keeps the asset_id -- claims never participate in the id derivation, so
+    adding a citation to a published asset is an upgrade, not a new asset.
+    """
+    from . import vault as vault_mod
+
+    folder = find_asset(root, asset_id, unit_id)
+    if folder is None:
+        raise LabError("asset not found: %s" % asset_id)
+    asset = read_json(folder / "asset.json")
+    if not claims:
+        raise LabError("没有给出任何 claim")
+    vr = Path(vault_root) if vault_root else vault_mod.vault_root()
+    located: list[dict] = []
+    reasons: list[str] = []
+    for claim in claims:
+        try:
+            found = anchors.locate(vr, claim.get("session_key") or "",
+                                   claim.get("from_ts") or "", claim.get("to_ts") or "")
+            located.append(anchors.make_claim(found, claim.get("title") or ""))
+        except LabError as exc:
+            reasons.append(str(exc))
+    if reasons:
+        raise LabError("有 %d 条 claim 无法落锚，资产未改：\n%s" % (len(reasons), "\n".join("- " + r for r in reasons)))
+
+    existing = asset.get("claims") or []
+    key_of = lambda item: (item["session_key"], item["from_ts"], item["to_ts"])  # noqa: E731
+    merged = [item for item in existing if key_of(item) not in {key_of(n) for n in located}]
+    merged.extend(located)
+    asset["claims"] = merged
+    asset["profile"] = "claim-anchored"
+    _write_folder(folder, asset)
+    return {"asset_id": asset_id, "attached": len(located), "claims": len(merged)}
+
+
+def verify_claims(root: Path, asset_id: str, unit_id: str | None = None,
+                  vault_root: Path | None = None) -> dict:
+    """Re-derive every claim against the vault as it exists now.
+
+    A claim whose span no longer re-derives to the same quote -- source moved,
+    shard pruned or drifted -- is degraded to `stale` (recorded in
+    VALIDATION.md, never rendered again), not silently kept and not deleted.
+    """
+    from . import vault as vault_mod
+
+    folder = find_asset(root, asset_id, unit_id)
+    if folder is None:
+        raise LabError("asset not found: %s" % asset_id)
+    asset = read_json(folder / "asset.json")
+    claims = asset.get("claims") or []
+    if not claims:
+        raise LabError("这份资产还没有引文可核对（先 attach_claims）")
+    vr = Path(vault_root) if vault_root else vault_mod.vault_root()
+    stale = []
+    for claim in claims:
+        try:
+            found = anchors.locate(vr, claim["session_key"], claim["from_ts"], claim["to_ts"])
+            if found["quote_sha256"] == claim["quote_sha256"]:
+                claim["state"] = "verified"
+                claim["stale_reason"] = None
+            else:
+                claim["state"] = "stale"
+                claim["stale_reason"] = "区间正文与锚点哈希不符（源已变化）"
+                stale.append(claim["title"])
+        except LabError as exc:
+            claim["state"] = "stale"
+            claim["stale_reason"] = str(exc)
+            stale.append(claim["title"])
+    asset["claims"] = claims
+    _write_folder(folder, asset)
+    return {"asset_id": asset_id, "verified": len(claims) - len(stale), "stale": stale}

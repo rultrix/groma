@@ -25,7 +25,7 @@ from lab import __version__
 from lab import hooks
 from lab import reconcile, topics, unitmatch
 from lab.agents import sync_agents
-from lab.asset import build_asset, list_assets
+from lab.asset import attach_claims, build_asset, list_assets, verify_claims
 from lab.collect import catchup, catchup_all, last_run
 from lab.control import is_paused, machine_state, pause_machine, resume_machine
 from lab.discovery import discover
@@ -35,6 +35,7 @@ from lab.observe_this_machine import digest_rows_from_index, generate_observatio
 from lab.settings import load_settings, save_settings
 from lab.sources import add_source, load_sources, remove_source
 from lab.state import (
+    ephemeral_root,
     first_run,
     list_memberships,
     list_workspaces,
@@ -408,6 +409,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             "unit_name": unit.get("name"),
             "current_unit_id": unit["unit_id"],
             "units": unitmatch.unit_list(),
+            "themes": unitmatch.themes(),
             "topics": topics.list_topics(),
             "workspaces_all": list_workspaces(),
             "workspace_root": root.as_posix(),
@@ -448,16 +450,17 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
                 "latest": max(records, key=lambda r: r.get("created_at") or "", default=None),
             }
 
-        # 这张表的行来自人建标签（`topics.json`），不再来自 `units.json` 的自动身份卡。
+        # 这张表的行只认「人建过的协作主题」那一个谓词（`unitmatch.themes()`），不各页再写一份过滤。
         # 「上次写入」仍按整机口径扫所有 Unit 记录——那一行说的是这台机器最后一次写入，不是某个主题。
         overview = []
-        for topic in topics.list_topics():
-            roots = unitmatch.workspaces_for_unit(topic["topic_id"])
+        for unit in unitmatch.themes():
+            roots = unit["workspaces"]
             view = collected_for(roots)
+            record = topics.topic_record(unit["unit_id"]) or {}
             overview.append({
-                "unit_id": topic["topic_id"],
-                "name": topic["name"],
-                "org_path": topic.get("org_path"),
+                "unit_id": unit["unit_id"],
+                "name": record.get("name") or unit.get("name") or unit["unit_id"],
+                "org_path": record.get("org_path") or unit.get("org_path"),
                 "workspaces": len(roots),
                 "collected": view["counts"]["collected_sessions"],
                 "unclassified": view["counts"]["unclassified"],
@@ -511,6 +514,8 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
                 # Server-side so the label cannot drift from the comparison the
                 # first-run card already makes (case and separators differ on Windows).
                 "is_boot_root": normalise_path(path) == normalise_path(boot_root),
+                # 判据与登记那一步共用同一个函数：亮 badge 的范围必须等于会被挡住的范围。
+                "is_temp": ephemeral_root(path),
             })
         root_rows = []
         for entry in (reconcile.harness_roots_for([chosen]) if chosen is not None else []):
@@ -585,7 +590,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
     @app.get("/activity")
     def activity_page():
         sections = []
-        for unit in unitmatch.unit_list():
+        for unit in unitmatch.themes():
             home = unitmatch.home_path(unit["unit_id"])
             if home is None:
                 sections.append({"unit": unit, "home": None, "summary": None, "coverage": None})
@@ -798,15 +803,19 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
     @app.get("/units")
     def units_page():
         blocks = []
-        all_units = unitmatch.unit_list()
+        themes = unitmatch.themes()
         from lab.classify_run import STATE_TEXT, last_runs, run_summary
 
         runs = last_runs(500)
         registry = list_workspaces()
-        # others 表里"它自称的主题"要报名字而不是短码（K10(b)），
-        # 名字就在下面这份 list 里，所以 0 新取数。
-        unit_names = {item["unit_id"]: (item.get("name") or item["unit_id"]) for item in all_units}
-        for unit in all_units:
+        # 候选表那一格要报名字而不是短码，名字就地从这份取数里拿（0 新取数）。
+        # 没通过谓词的 Unit 记录不进这张表 ⇒ 模板那边落到「没有协作主题」那一档，
+        # 不许在模板里重算一遍判断。
+        unit_names = {}
+        for item in themes:
+            record = topics.topic_record(item["unit_id"]) or {}
+            unit_names[item["unit_id"]] = record.get("name") or item.get("name") or item["unit_id"]
+        for unit in themes:
             home = unitmatch.home_path(unit["unit_id"])
             info, error, rows = None, None, []
             if home is not None:
@@ -1055,7 +1064,9 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
     @app.get("/unit/select")
     def unit_select():
         unit_id = (request.args.get("unit_id") or "").strip()
-        if not any(item["unit_id"] == unit_id for item in unitmatch.unit_list()):
+        # 作用域只能落在「人建过的协作主题」上：整机的 active 是行级动作的回落目标，
+        # 指到一张自动折出来的身份卡上，等于把后面每个动作都接到一份没有主题的账里。
+        if not any(item["unit_id"] == unit_id for item in unitmatch.themes()):
             return back("units_page", "没有这个协作主题：%s" % (unit_id or "（空）"))
         focus(unit_id)
         return redirect(url_for("units_page"), code=303)
@@ -1085,7 +1096,8 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             return back("units_page", "缺少路径")
         target = Path(raw).expanduser()
         try:
-            unitmatch.set_home(target_unit(), target)
+            # 这是人亲自指着这个区当家 ⇒ 记成人建的；内部那处换家（移除工作区之后）不带这个标记。
+            unitmatch.set_home(target_unit(), target, by_human=True)
         except LabError as exc:
             return back("units_page", str(exc))
         focus(target_unit())
@@ -1210,7 +1222,7 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
             return back("units_page", str(exc))
         if was_focused:
             # 不许留一个指向已删主题的 active["unit"]——current_unit() 被全站用。
-            fallback = unitmatch.unit_list()
+            fallback = unitmatch.themes()
             if fallback:
                 focus(fallback[0]["unit_id"])
         bits = ["已删除协作主题：%s" % result["name"]]
@@ -1222,11 +1234,49 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
         bits.append("它的 %d 个工作区都还在（现在没有协作主题）" % len(result["workspaces"]))
         return back("units_page", notice="；".join(bits))
 
+    @app.get("/units/retire/confirm")
+    def unit_retire_confirm():
+        """确认页：退的是"这是不是一条协作主题"，工作区、身份卡与那句说明都留下。"""
+        unit_id = (request.args.get("unit") or "").strip()
+        record = next((item for item in unitmatch.themes() if item["unit_id"] == unit_id), None)
+        if record is None:
+            return back("units_page", "没有这个协作主题：%s" % (unit_id or "（空）"))
+        return render_template(
+            "unit_retire.html",
+            **context(unit_id=unit_id, unit_name=record.get("name") or unit_id,
+                      org_path=record.get("org_path"),
+                      workspaces=unitmatch.workspaces_for_unit(unit_id),
+                      intent=str((topics.topic_record(unit_id) or {}).get("intent") or "").strip(),
+                      last_of_it=len(unitmatch.themes()) <= 1),
+        )
+
+    @app.post("/units/retire")
+    def unit_retire():
+        """退成纯工作区：把这条记录标成机器折的身份登记，其余一概不动。"""
+        if (request.form.get("confirm") or "") != "1":
+            return back("units_page", "退成纯工作区要经过确认页：先看清留下什么，再提交")
+        unit_id = (request.form.get("unit") or "").strip()
+        was_focused = unit_id == current_unit()
+        try:
+            record = unitmatch.retire_to_workspace(unit_id)
+        except LabError as exc:
+            return back("units_page", str(exc))
+        if was_focused:
+            fallback = unitmatch.themes()
+            if fallback:
+                focus(fallback[0]["unit_id"])
+        return back("units_page", notice=(
+            "已退成纯工作区：%s（它的 %d 个工作区、身份卡与那句说明都留着；"
+            "夜里不会再为它跑归类，要重新认回来就在其中那个区上建一次主题）"
+            % (record.get("name") or unit_id, len(record.get("workspaces") or [])
+               or len(unitmatch.workspaces_for_unit(unit_id)))))
+
     @app.get("/assets")
     def assets_page():
         blocks = []
-        for topic in topics.list_topics():
-            home = unitmatch.home_path(topic["topic_id"])
+        for unit in unitmatch.themes():
+            unit_id = unit["unit_id"]
+            home = unitmatch.home_path(unit_id)
             items = []
             if home:
                 try:
@@ -1239,11 +1289,12 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
                     continue
                 seen.add(item["asset_id"])
                 unique.append(item)
+            record = topics.topic_record(unit_id) or {}
             blocks.append({
-                "topic": topic.get("name") or topic["topic_id"],
-                "topic_id": topic["topic_id"],
+                "topic": record.get("name") or unit.get("name") or unit_id,
+                "topic_id": unit_id,
                 "home": Path(home).as_posix() if home else "",
-                "members": len(unitmatch.workspaces_for_unit(topic["topic_id"])),
+                "members": len(unit["workspaces"]),
                 "assets": unique,
             })
         files = unitmatch.unit_digest_union(current())["files"]
@@ -1313,6 +1364,38 @@ def create_app(unit_root: Path, on_switch=None) -> Flask:
         return back(landing, notice="已重铸《%s》，依据 %d 个会话%s" % (
             built["title"], built["sessions"],
             "（跳过 %d 条已不在采集范围）" % skipped if skipped else ""))
+
+    @app.post("/assets/anchor")
+    def assets_anchor():
+        asset_id = (request.form.get("asset_id") or "").strip()
+        raw = (request.form.get("path") or "").strip()
+        root = Path(raw).expanduser() if raw else current()
+        claim = {
+            "title": (request.form.get("title") or "").strip(),
+            "session_key": (request.form.get("session_key") or "").strip(),
+            "from_ts": (request.form.get("from_ts") or "").strip(),
+            "to_ts": (request.form.get("to_ts") or "").strip(),
+        }
+        try:
+            result = attach_claims(root, asset_id, [claim])
+        except LabError as exc:
+            return back("assets_page", str(exc))
+        return back("assets_page", notice="已为《%s》落锚 1 条引文（共 %d 条）；整条拒绝的核对在「验证状态」里。"
+                    % (asset_id, result["claims"]))
+
+    @app.post("/assets/verify")
+    def assets_verify():
+        asset_id = (request.form.get("asset_id") or "").strip()
+        raw = (request.form.get("path") or "").strip()
+        root = Path(raw).expanduser() if raw else current()
+        try:
+            result = verify_claims(root, asset_id)
+        except LabError as exc:
+            return back("assets_page", str(exc))
+        if result["stale"]:
+            return back("assets_page", "核对完成：%d 条有效，%d 条降级 stale（已记入 VALIDATION.md，导出不再渲染）"
+                        % (result["verified"], len(result["stale"])))
+        return back("assets_page", notice="核对完成：%d 条引文全部有效。" % result["verified"])
 
     @app.post("/assets/export")
     def assets_export():

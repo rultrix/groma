@@ -197,6 +197,10 @@ def sync_units() -> dict:
     second clone. Importing it is what makes that show up as one Unit without the
     human re-joining every folder. After the record exists, only explicit joins
     add folders, so a `leave` is never quietly undone by a stale card.
+
+    这里只标来源，不改折叠的范围：一张遗留的卡让目录"重开即复活"是已拍并实现过的形状，
+    关掉它得另立一刀。界面上"算不算协作主题"由 `is_theme` 一处判，折出来的行标 `card` 之后，
+    那条记录仍在账里（作用域、资产落点都不受影响），只是不再冒充人建的主题。
     """
     known = {item["unit_id"] for item in state.list_units()}
     groups: dict[str, list[dict]] = {}
@@ -212,7 +216,9 @@ def sync_units() -> dict:
         home = sorted(items, key=lambda item: (_card_created(item["path"]) or "9", item["path"]))[0]
         name = next((item["link"].get("name") for item in items if item["link"].get("name")), None)
         org = next((item["link"].get("org_path") for item in items if item["link"].get("org_path")), None)
-        state.upsert_unit(unit_id, name=name or Path(home["path"]).name, org_path=org, home_binding=home["ref"])
+        # 这一支折出来的行来源是卡，不是人：显式标 `card`，别让界面去猜（缺省即 human 会把机器折的说成人建的）。
+        state.upsert_unit(unit_id, name=name or Path(home["path"]).name, org_path=org,
+                          home_binding=home["ref"], origin="card")
         for item in items:
             if item["ref"] != home["ref"]:
                 state.add_membership(unit_id, item["ref"], role=ROLE_EVIDENCE, signal="identity-card", source="import")
@@ -226,6 +232,7 @@ def sync_units() -> dict:
             unit_id,
             name=Path(local).name if local else unit_id,
             home_binding=membership["binding_id"] if membership.get("role") == ROLE_PRIMARY else None,
+            origin="card",
         )
         created.append(unit_id)
     return {"units": state.list_units(), "created": created}
@@ -294,6 +301,7 @@ def materialise(unit_id: str) -> dict:
             org_path=record.get("org_path"),
             home_binding=record["home_binding"],
             created_at=record.get("created_at"),
+            origin="card",
         )
     return state.unit_record(unit_id)
 
@@ -405,19 +413,24 @@ def create_unit(name: str, home: str | Path, org_path: str | None = None) -> dic
             raise LabError("%s 还带着另一个 Unit 的身份，那边另有工作区；先在那一页处理" % home.name)
         # Alone in its Unit: rename and re-home that Unit instead of minting a
         # second id, because every digest and asset it wrote is stamped with it.
-        state.upsert_unit(claimed, name=name, org_path=org, home_binding=binding)
+        state.upsert_unit(claimed, name=name, org_path=org, home_binding=binding, origin="human")
         ensure_unit(home)
         apply_card(home, identity_of(claimed))
         return state.unit_record(claimed)
     unit_id = "unit_" + secrets.token_hex(8)
-    state.upsert_unit(unit_id, name=name, org_path=org, home_binding=binding)
+    state.upsert_unit(unit_id, name=name, org_path=org, home_binding=binding, origin="human")
     ensure_unit(home)
     apply_card(home, identity_of(unit_id))
     return state.unit_record(unit_id)
 
 
-def set_home(unit_id: str, target: str | Path) -> dict:
-    """Move the Unit's home; the folder it leaves stays a member."""
+def set_home(unit_id: str, target: str | Path, by_human: bool = False) -> dict:
+    """Move the Unit's home; the folder it leaves stays a member.
+
+    `by_human` 只有"人指着这个区当家"那两条路（界面表单与 `groma unit home`）传 True：
+    那等于承认这是他的协作主题。内部那处"区被移除后换个家"不传——它在修指针，
+    替机器做决定会把一张自动折出来的卡说成人建的。
+    """
     target = Path(target)
     if not target.is_dir():
         raise LabError("目录不存在：%s" % target.as_posix())
@@ -428,7 +441,8 @@ def set_home(unit_id: str, target: str | Path) -> dict:
     apply_card(target, identity_of(unit_id))
     if previous and previous != binding and state.workspace_path(previous):
         state.add_membership(unit_id, previous, role=ROLE_EVIDENCE, signal="was-home", source="human")
-    return state.upsert_unit(unit_id, home_binding=binding)
+    return state.upsert_unit(unit_id, home_binding=binding,
+                             origin="human" if by_human else None)
 
 
 def rename_unit(unit_id: str, name: str) -> dict:
@@ -437,7 +451,8 @@ def rename_unit(unit_id: str, name: str) -> dict:
     if not name:
         raise LabError("Unit 名称不能为空")
     materialise(unit_id)
-    record = state.upsert_unit(unit_id, name=name)
+    # 起名这个动作本身就是"人建立了它"：只有界面表单与 `groma unit rename` 会走到这里。
+    record = state.upsert_unit(unit_id, name=name, origin="human")
     _refresh_cards(unit_id)
     return record
 
@@ -528,6 +543,52 @@ def unit_list() -> list[dict]:
         roots = workspaces_for_unit(unit_id)
         out.append({**resolve_unit(unit_id), "workspaces": roots, "workspace_count": len(roots)})
     return out
+
+
+def is_theme(record: dict) -> bool:
+    """这条 Unit 记录算不算「人建过的协作主题」——这个判断只在这里实现一次。
+
+    界面上「协作主题」只能有一份账：`units.json` 里有些行是开机时从工作区身份卡折出来的，
+    没人建过它；把它们当主题，概览与主题页就各报一个数。
+
+    三个分支，按"人说过什么"排序，不按字段有没有排：
+    - `retired`：人在界面上或命令行亲手退过 ⇒ 谁说都不算，包括那条留着的话题说明（见 `retire_to_workspace`）。
+    - `human`：人建的。这一支管"刚建好、说明还没写"的窗口——`topics.json` 那一行是保存说明时才补的。
+    - 其余（`card` 或这条字段之前的存量）：只有 `topics.json` 里已有对应行才算。
+      缺省不当主题也不当已退：折回来的行（`card`）配着说明仍要算，那是同机多 clone 认领的本事。
+    """
+    origin = str(record.get("origin") or "")
+    if origin == "retired":
+        return False
+    if origin == "human":
+        return True
+    from . import topics  # topics 依赖本模块，反向引用只能在函数里做，否则循环导入
+
+    return topics.topic_record(str(record.get("unit_id") or "")) is not None
+
+
+def themes() -> list[dict]:
+    """人建过的协作主题，形状与 `unit_list()` 一致（带 `workspaces`／`workspace_count`）。"""
+    return [item for item in unit_list() if is_theme(item)]
+
+
+def retire_to_workspace(unit_id: str) -> dict:
+    """把一条协作主题退成纯工作区：记录、身份卡、那句说明都留着，只是不再被当主题。
+
+    为什么不删那行：身份卡还在，下次开机就会按「同机多 clone 要认得回来」把它折上——
+    删行是假清账，改来源才是真的。为什么不删说明：那是用户写的字，退一次就销毁等于丢数据；
+    留着也不会再被跑到，因为归类那条链与界面读的是同一个判断（`topics.declared_topics()`）。
+    来源写 `retired`，不写 `card`：退过是**人说过的话**，和"机器折的"不是一回事——
+    写着 `card` 又留着说明的那一行，会被谓词的存量那一支重新认成主题。
+    想再认回来：在同名区上建一次主题即可（`create_unit` 会把来源改回 `human`）。
+    """
+    record = state.unit_record(unit_id)
+    if record is None:
+        raise LabError("本机没有这条协作主题：%s" % (unit_id or "（空）"))
+    if not is_theme(record):
+        raise LabError("「%s」本来就不是协作主题（它是工作区自带的身份记录），不用退"
+                       % (record.get("name") or unit_id))
+    return state.upsert_unit(unit_id, origin="retired")
 
 
 def digest_paths_for(roots: list[str]) -> list[Path]:

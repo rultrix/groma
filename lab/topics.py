@@ -137,6 +137,16 @@ def list_topics() -> list[dict]:
     return sorted(rows, key=lambda item: item["name"])
 
 
+def declared_topics() -> list[dict]:
+    """还活着的那些主题。判据不住在这里——只问 `unitmatch.themes()`，别再写一份过滤。
+
+    归类那条链用它，是因为"退成纯工作区"刻意把那句说明留在账里（那是用户写的字，不是机器的东西）：
+    只按 topics 取数，夜里就会继续为一个界面上已经不存在的主题跑一次归类，而那是花额度的一件事。
+    """
+    live = {item["unit_id"] for item in unitmatch.themes()}
+    return [item for item in list_topics() if item["topic_id"] in live]
+
+
 def topic_record(topic_id: str) -> dict | None:
     for item in list_topics():
         if item["topic_id"] == topic_id:
@@ -357,6 +367,9 @@ def reforge(root: str | Path, topic: str, title: str | None = None, note: str = 
 
     引不到的键在选中前就被剔除并计数（`skipped_stale`），计数同时进返回值与账本：
     只进返回值等于事后无法取证。
+
+    `root` 是调用者的立足点，**不再决定资产落在哪**：协作主题的证据跨工作区，
+    从哪个成员区发起都必须得到同一份资产，所以落点恒为主题的家（`home_path`）。
     """
     from .asset import build_asset
 
@@ -373,7 +386,10 @@ def reforge(root: str | Path, topic: str, title: str | None = None, note: str = 
                 "asset_id": None, "sessions": 0, "skipped_stale": skipped_stale,
                 "skipped": skipped,
                 "reason": "证据集已整体失效，没有可重铸的依据"}
-    asset = build_asset(Path(root), label, selection, note)
+    home = unitmatch.home_path(record["topic_id"])
+    if not home:
+        raise ValueError("协作主题「%s」没有本机工作区，重铸无处落盘" % record["name"])
+    asset = build_asset(Path(home), label, selection, note)
     _append_reforge({
         "schema": SCHEMA,
         "topic_id": record["topic_id"],

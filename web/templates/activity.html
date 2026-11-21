@@ -22,7 +22,7 @@
     <tr><td>{{ s.source }}</td><td>{{ s.sessions }}</td><td>{{ s.events }}</td><td class="muted">{{ s.newest_ts|local_ts }}</td></tr>
     {% endfor %}
   </table>
-  {# A3（刀 V4 删）：这里原来常驻一段「活跃时段覆盖率不再在这里算：它的分母来自我们自己的 digest，永远绿。
+  {# A3：这里原来常驻一段「活跃时段覆盖率不再在这里算：它的分母来自我们自己的 digest，永远绿。
      漏采与未分类在顶部状态线（分母是厂商清单与主题层）」。那是向用户解释"一个被移除的指标为什么被移除"，
      用户既无法核对也不需要决定什么。**删的是承载位置，不是教训**——
      这条边界现在住在 docs/ARCHITECTURE-AND-OBSERVATION.md §4.2.2「两条不许越的边界」第 2 条，

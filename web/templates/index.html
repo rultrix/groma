@@ -3,7 +3,7 @@
 {% block body %}
 <h1>概览</h1>
 <div class="muted" style="margin:-8px 0 14px">
-  整机口径：{{ registered|length }} 个工作区、{{ topics|length }} 个协作主题。<b>协作主题不是给工作区取名</b>——
+  整机口径：{{ registered|length }} 个工作区、{{ themes|length }} 个协作主题。<b>协作主题不是给工作区取名</b>——
   它至少要收进一个<b>已经采到会话</b>的工作区，没有来源就建不出资产；<b>协作主题是行，不是开关</b>，
   没挂进主题的目录只在「工作区」那一格里计数，要处理工作区请去<a href="{{ url_for('discover_page') }}">发现</a>。
 </div>
@@ -67,10 +67,10 @@
         {% if not last_write.written_by %}<b>· 来源未登记</b>{% endif %}
       </div>
       {% if last_write.written_by %}
-      {# I3（刀 V4）：entry / trigger / pid 是给排障的人看的取证，折起来。
+      {# I3：entry / trigger / pid 是给排障的人看的取证，折起来。
          可见面仍留着「上次写入 <时刻>」——test_overview_write_line_uses_one_record 钉的就是这半句；
          同一条测试另钉 <code>cli:new</code>，它在 details 里仍在响应体中，折叠不改它的判据。
-       I4（刀 V4）：这里原来跟在「这份 digest 没有 written_by」后面那句
+       I4：这里原来跟在「这份 digest 没有 written_by」后面那句
          「（0.39 产物，或绕过了登记的写入口）」是版本考古，读者是无从核对的用户——删，去处就是这条注释。 #}
       <details class="muted">
         <summary>写入取证</summary>
@@ -135,7 +135,7 @@
     <label style="display:flex;gap:6px;align-items:center;font-size:13px">
       <input type="checkbox" name="auto_inject" value="on" {% if settings.auto_inject %}checked{% endif %}>自动投放到工作区</label>
     <button type="submit" class="ghost">保存</button>
-    {# I8（刀 V4）：后半句原来还带「主题页会写明未传导——不用猜」。主题页自己会写（U2 保留那句，
+    {# I8：后半句原来还带「主题页会写明未传导——不用猜」。主题页自己会写（U2 保留那句，
        由 test_theme_page_shows_the_chain_stopped 钉），跨页指路是重复；「不用猜」是设计师口吻，删。 #}
     <span class="muted">开着时，一次归类会顺带花额度重铸资产并投放到工作区；关掉后链路停在「已归类」。</span>
   </form>
@@ -160,7 +160,7 @@
   <div class="muted" style="margin-top:10px">
     <b>漏采 {{ report.counts.missing_from_collection }}</b> = 厂商清单 {{ report.counts.vendor_db_sessions }} 条与磁盘转写 {{ report.counts.transcript_files }} 个文件里有、我们没采的部分；
     另有 <b>{{ report.counts.undeclared_roots }}</b> 个根存在但没申报。
-    {# I10（刀 V4）：口径方法论那句降成 ⓘ，因为同一句话在缺口页是全文且在那儿才是钥匙
+    {# I10：口径方法论那句降成 ⓘ，因为同一句话在缺口页是全文且在那儿才是钥匙
        （G1 保留，由 test_gap_page_rows_equal_the_overview_number 钉）。 #}
     {{ tip("这是对账，不是覆盖率——分母不来自我们自己的产出") }}
     <a href="{{ url_for('gaps_page') }}">看漏采的是哪些 →</a>

@@ -15,14 +15,14 @@
 {% if running %}
 <div class="card" style="border-left:4px solid #b45309;background:#fffbeb">
   <b>上一次重建仍在进行</b>：始于 <code>{{ reindex.started_at|local_ts }}</code>，还没有收尾。
-  {# O3（刀 V4）：行为承诺留可见面，中断窗的解释进 ⓘ——那一窗口的判据在路由里，
+  {# O3：行为承诺留可见面，中断窗的解释进 ⓘ——那一窗口的判据在路由里，
      中断卡自己会说话（O4），这里重复一遍机制不产生动作。 #}
   <div class="muted" style="margin-top:4px">{{ reindex_wait }}；再点一次不会并行跑，也不会覆盖上一次的结果。{{ tip("超过 " ~ reindex_window_min ~ " 分钟没收尾会被当成中断，届时可以重新点") }}</div>
 </div>
 {% elif abandoned %}
 <div class="card" style="border-left:4px solid #b45309;background:#fffbeb">
   <b>上次重建未收尾（视为中断）</b>：始于 <code>{{ reindex.started_at|local_ts }}</code>，超过 {{ reindex_window_min }} 分钟没有回执。
-  {# O4（刀 V4）：可见面给"现在能做什么"，内部机制（哪一半可能没写完）折起来。 #}
+  {# O4：可见面给"现在能做什么"，内部机制（哪一半可能没写完）折起来。 #}
   <div class="muted" style="margin-top:4px">这一条不再拦你，可以直接重新点，重来一次是安全的。
     <details>
       <summary>中断的那一轮可能停在哪</summary>
@@ -46,7 +46,7 @@
 <div class="card">
   <h2>观测页是静态产物</h2>
   <p>重建一次：{{ reindex_wait }}。完成后页面会瞬时刷新，直到你下次点"重建"。</p>
-  {# O5（刀 V4 降级 details）：错误态要保留出口，但 CLI 手册不该铺满卡片——summary 自己说清这是干什么的。 #}
+  {# O5（降级 details）：错误态要保留出口，但 CLI 手册不该铺满卡片——summary 自己说清这是干什么的。 #}
   <details>
     <summary>排障步骤（命令行）：先确认 vault 已初始化</summary>
     <ol>
@@ -80,10 +80,10 @@
     </table>
   </details>
   {% else %}
-  {# O6（刀 V4）：删「免得用旧的顶上」——那是我们不给数字的理由，用户不需要读一遍设计论证才知道没数。 #}
+  {# O6：删「免得用旧的顶上」——那是我们不给数字的理由，用户不需要读一遍设计论证才知道没数。 #}
   <p class="muted">产物在，但读不到 vault 索引 —— 数字这次不给。</p>
   {% endif %}
-  {# O8（刀 V4 降级 ⓘ）：这句搬到页顶重建按钮旁边（本卡开头那条 tip），产物语义跟着动作走。 #}
+  {# O8（降级 ⓘ）：这句搬到页顶重建按钮旁边（本卡开头那条 tip），产物语义跟着动作走。 #}
 </div>
 {% else %}
 <div class="card">

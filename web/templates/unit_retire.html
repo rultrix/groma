@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>退成纯工作区</h1>
+
+{# 这一页只读，POST 才动账。与「删除协作主题」的区别必须写在明面上：
+   那条会摘注入、删身份卡、清注册表指针；这条只把"这是不是一条协作主题"改回来，
+   其余（工作区、卡、说明、已生成的资产）一概不动。 #}
+<div class="modal-veil">
+  <dialog open>
+    <div style="font-size:16px;font-weight:700">确认把协作主题 {{ unit_name }} 退成纯工作区</div>
+    <div class="muted" style="margin-top:4px"><code>{{ unit_id }}</code>{% if org_path %} · {{ org_path }}{% endif %}</div>
+
+    <div class="muted" style="margin-top:12px">
+      <b>退的只是"它算不算一条协作主题"。</b>
+      退完它就从概览、协作主题页、资产页、活动页上消失，夜里也不会再为它跑归类（那句说明留着，所以这一步不花钱也不丢字）。
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <div class="stat"><div class="k">留下</div><div class="v" style="font-size:15px">工作区 {{ workspaces|length }} 个 · 身份卡 · 一句说明</div></div>
+      <div class="stat"><div class="k">不再算</div><div class="v" style="font-size:15px">界面上的一条协作主题</div></div>
+    </div>
+
+    <div class="muted" style="margin-top:12px">
+      {% if intent %}这句说明会原样留在 <code>topics.json</code>：<b>{{ intent|truncate(120, true) }}</b>{% else %}这条主题还没写过一句说明。{% endif %}
+      想再认回来：在它任何一个工作区上按「新建一个协作主题」用同名建一次即可（会落回同一个身份，不会多出一个）。
+    </div>
+
+    <table style="margin-top:14px">
+      <tr><th style="width:60%">留下的工作区</th><th>它的身份卡</th></tr>
+      {% for path in workspaces %}
+      <tr><td><code>{{ path }}</code></td><td class="muted">不动</td></tr>
+      {% endfor %}
+      {% if not workspaces %}<tr><td colspan="2" class="muted">这个协作主题当前没有可用工作区（登记行可能已失效，去发现页看）。</td></tr>{% endif %}
+    </table>
+
+    {% if last_of_it %}
+    <div class="err" style="margin-top:14px"><b>退掉它，本机就没有协作主题了。</b>概览与主题页会回到空态；采集照旧跑，工作区一个都不少。</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('unit_retire') }}" style="margin-top:16px">
+      <input type="hidden" name="unit" value="{{ unit_id }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="danger">确认退成纯工作区</button>
+    </form>
+    <p style="margin-top:12px"><a href="{{ url_for('units_page') }}">取消，← 返回</a></p>
+  </dialog>
+</div>
+{% endblock %}

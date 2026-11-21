@@ -67,6 +67,15 @@ def _render_index(asset: dict) -> str:
         )
     if asset.get("notes"):
         lines += ["", "## 备注", "", asset["notes"]]
+    if asset.get("claims"):
+        # claim-anchored 档：导出随带逐条带锚点的引文；stale 的不渲染（未核对不装有效）
+        from . import anchors
+
+        rendered, omitted = anchors.render_claims(asset["claims"])
+        if rendered:
+            lines += ["", "## 结论与引文", ""] + rendered
+            if omitted:
+                lines += ["", "另见：还有 %d 条未核对（stale）的结论，见 VALIDATION.md 的「锚点核对」。" % omitted]
     lines += [
         "",
         "## 使用边界",
@@ -293,6 +302,42 @@ def refresh_unit(unit_id: str) -> list[dict]:
     return out
 
 
+def _delivery_reconciliation(root: Path, book: dict) -> dict:
+    """Reconcile the three sha256 values that describe a delivery.
+
+    Three parties, each recorded somewhere else: the manifest (what we stored
+    last), the payload file on disk (what the hook would serve now) and the
+    newest `action=inject` receipt (what a host actually took). The payload is
+    rewritten by every refresh while a delivery only happens when a session
+    rebuilds, so "served the new one" and "served the old one" coexist for most
+    of the day -- without this reconciliation the receipt cannot tell them apart.
+
+    `none` = nothing delivered yet; `match` = the host took exactly what is on
+    disk; `stale` = what was served is not what is stored now -- including the
+    payload being gone (paused) while a receipt survives, which is NOT the same
+    as never having delivered.
+    """
+    disk_sha = None
+    path = surface.payload_path(root)
+    if path.is_file():
+        disk_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest_sha = (book.get("payload") or {}).get("sha256")
+    delivered_sha = (hooks.last_delivery(root) or {}).get("sha256")
+    if disk_sha is None:
+        state = "stale" if delivered_sha else "none"
+    elif delivered_sha is None:
+        state = "none"
+    else:
+        state = "match" if delivered_sha == disk_sha else "stale"
+    return {
+        "state": state,
+        "disk_matches_manifest": disk_sha is not None and manifest_sha is not None and disk_sha == manifest_sha,
+        "manifest_sha256": manifest_sha,
+        "disk_sha256": disk_sha,
+        "delivered_sha256": delivered_sha,
+    }
+
+
 def inject_status(root: Path) -> dict:
     """What the manifest claims vs what is on disk now -- drift is visible, not assumed."""
     root = Path(root)
@@ -308,6 +353,7 @@ def inject_status(root: Path) -> dict:
         "source": book.get("source"),
         "gate": book.get("gate"),
         "payload_present": surface.payload_path(root).is_file(),
+        "delivery": _delivery_reconciliation(root, book),
     }
 
 
@@ -340,6 +386,7 @@ def injection_summary(unit_id: str) -> dict:
             "payload_sha256": (book.get("payload") or {}).get("sha256"),
             "faces": faces,
             "last_delivery": hooks.last_delivery(workspace),
+            "delivery": _delivery_reconciliation(workspace, book),
         }
     return out
 

@@ -18,7 +18,7 @@ from . import __version__, schedule as schedule_mod
 from . import classify, classify_run, hooks, provider, reconcile, topics
 from . import trigger as trigger_mod
 from . import unitlink, unitmatch
-from .asset import build_asset, list_assets
+from .asset import attach_claims, build_asset, list_assets, verify_claims
 from . import inject as inject_mod
 from .inject import export_context, inject_status, inject_unit, refresh as refresh_payload, uninject
 from .agents import sync_agents
@@ -192,6 +192,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root(asset_export, default=argparse.SUPPRESS)
     asset_export.add_argument("asset_id")
     asset_export.add_argument("--out", default=None, help="target .md path")
+    asset_anchor = asset_sub.add_parser("anchor", help="attach a human-supplied claim (title + session + ts window)")
+    _add_root(asset_anchor, default=argparse.SUPPRESS)
+    asset_anchor.add_argument("asset_id")
+    asset_anchor.add_argument("--title", required=True, help="结论句")
+    asset_anchor.add_argument("--session-key", required=True)
+    asset_anchor.add_argument("--from-ts", required=True)
+    asset_anchor.add_argument("--to-ts", required=True)
+    asset_verify = asset_sub.add_parser("verify", help="re-derive every claim against the vault now")
+    _add_root(asset_verify, default=argparse.SUPPRESS)
+    asset_verify.add_argument("asset_id")
 
     topic_cmd = sub.add_parser("topic", help="topics: candidate packs, selection events, re-forge")
     _add_root(topic_cmd, default=argparse.SUPPRESS)
@@ -271,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_add = workspace_sub.add_parser("add", help="登记一个本地目录（只登记，不挂主题）")
     _add_root(workspace_add, default=argparse.SUPPRESS)
     workspace_add.add_argument("path", help="目录的本地绝对路径")
+    workspace_add.add_argument("--allow-ephemeral", action="store_true",
+                         help="允许登记系统临时目录下的路径（默认拒绝：那通常是脚本的沙箱）")
     workspace_remove = workspace_sub.add_parser(
         "remove", help="移除工作区：摘注入、删身份卡、删 .groma/（项目文件与 Harness 会话不动）")
     _add_root(workspace_remove, default=argparse.SUPPRESS)
@@ -316,6 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
     unit_home = unit_sub.add_parser("home", help="move this Unit's home to another workspace")
     _add_root(unit_home, default=argparse.SUPPRESS)
     unit_home.add_argument("--path", required=True, help="workspace to make the home")
+    unit_retire = unit_sub.add_parser(
+        "retire", help="把一条协作主题退成纯工作区（留身份卡与说明，只不再当主题）")
+    _add_root(unit_retire, default=argparse.SUPPRESS)
+    unit_retire.add_argument("unit", help="主题的 unit_id、名字或 org path")
 
     inject_cmd = sub.add_parser("inject", help="fan the Unit's background out to harness faces")
     _add_root(inject_cmd, default=argparse.SUPPRESS)
@@ -741,6 +757,13 @@ def main(argv: list[str] | None = None) -> int:
             elif args.asset_command == "export":
                 target = Path(args.out) if args.out else None
                 emit(export_context(root, args.asset_id, target))
+            elif args.asset_command == "anchor":
+                emit(attach_claims(root, args.asset_id, [{
+                    "title": args.title, "session_key": args.session_key,
+                    "from_ts": args.from_ts, "to_ts": args.to_ts,
+                }]))
+            elif args.asset_command == "verify":
+                emit(verify_claims(root, args.asset_id))
             else:
                 emit({"assets": list_assets(root)})
         elif args.command == "topic":
@@ -752,7 +775,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.workspace_command == "add":
                 if not target.is_dir():
                     raise LabError("目录不存在：%s" % target)
-                emit(register_workspace(target, target.name))
+                emit(register_workspace(target, target.name,
+                                  allow_ephemeral=args.allow_ephemeral))
             elif args.workspace_command == "remove":
                 if not args.yes:
                     emit(_forget_preview(target))
@@ -772,7 +796,8 @@ def main(argv: list[str] | None = None) -> int:
                 home = Path(args.home) if args.home else root
                 emit(unitmatch.create_unit(args.name, home, args.org))
             elif args.unit_command == "home":
-                emit(unitmatch.set_home(load_unit(root)["unit_id"], Path(args.path).expanduser()))
+                emit(unitmatch.set_home(load_unit(root)["unit_id"], Path(args.path).expanduser(),
+                                        by_human=True))
             elif args.unit_command == "detect":
                 emit(unitmatch.detect(root, args.scan))
             elif args.unit_command == "join":
@@ -793,6 +818,16 @@ def main(argv: list[str] | None = None) -> int:
                     emit(_drop_preview(match[0]["unit_id"]))
                     return EXIT_OK
                 emit(inject_mod.drop_unit(match[0]["unit_id"], root))
+            elif args.unit_command == "retire":
+                spec = (args.unit or "").strip()
+                match = [item for item in unitmatch.themes()
+                         if spec in (item.get("unit_id"), item.get("name"), item.get("org_path"))]
+                if not match:
+                    raise LabError("没有这个协作主题：%s" % (spec or "（空）"))
+                retired = unitmatch.retire_to_workspace(match[0]["unit_id"])
+                emit({"retired": retired["unit_id"], "name": retired.get("name"),
+                      "kept": ["身份卡", "注册表行", "一句说明"],
+                      "note": "它已退成纯工作区；界面上不再出现，夜里也不会再为它跑归类"})
             elif args.unit_command == "show" and args.value:
                 records = find_unit(args.value)
                 if not records:

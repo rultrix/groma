@@ -165,12 +165,17 @@ def write_wrapper(root: Path, kind: str = "scan") -> Path:
             f'if exist "%GROMA_LOG%" for %%I in ("%GROMA_LOG%") do if %%~zI GTR {LOG_LIMIT_BYTES} '
             'move /y "%GROMA_LOG%" "%GROMA_LOG%.prev"\r\n',
             'echo [%date% %time%] wrapper start>>"%GROMA_LOG%"\r\n',
+            'set "RC=0"\r\n',
         ]
         for step in steps:
             label = step.replace(" ", "-")
             lines.append(f'{prefix} --root "{root}" {step} >>"%GROMA_LOG%" 2>&1\r\n')
+            # 先落变量再打印：`echo` 一执行，%ERRORLEVEL% 就是它自己的 0。
+            lines.append('set "RC=%ERRORLEVEL%"\r\n')
             # 数字紧跟 `>>` 会被 cmd 读成"重定向句柄 0"而把退出码吞掉——这个空格是判据。
-            lines.append(f'echo [%date% %time%] step={label} exit=%ERRORLEVEL% >>"%GROMA_LOG%"\r\n')
+            lines.append(f'echo [%date% %time%] step={label} exit=%RC% >>"%GROMA_LOG%"\r\n')
+        # 最后一条若是 `echo`，计划任务的 Last Result 恒为 0——日志里的红点在调度器里变假绿。
+        lines.append("exit /b %RC%\r\n")
         body = "".join(lines)
     else:
         log = str(target.with_suffix(LOG_SUFFIX))
@@ -181,11 +186,14 @@ def write_wrapper(root: Path, kind: str = "scan") -> Path:
             f'if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt {LOG_LIMIT_BYTES} ]; then '
             'mv -f "$LOG" "$LOG.prev"; fi\n',
             'echo "[$(date -u +%FT%TZ)] wrapper start" >>"$LOG" 2>&1\n',
+            "rc=0\n",
         ]
         for step in steps:
             label = step.replace(" ", "-")
             lines.append(f'{prefix} --root "{root}" {step} >>"$LOG" 2>&1\n')
-            lines.append(f'echo "[$(date -u +%FT%TZ)] step={label} exit=$?" >>"$LOG" 2>&1\n')
+            lines.append("rc=$?\n")
+            lines.append(f'echo "[$(date -u +%FT%TZ)] step={label} exit=$rc" >>"$LOG" 2>&1\n')
+        lines.append("exit $rc\n")
         body = "".join(lines)
     target.write_text(body, encoding="utf-8", newline="")
     if os.name != "nt":

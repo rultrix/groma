@@ -49,7 +49,7 @@ def first_nav_block(body: str) -> str:
 def outside_details_blocks(body: str) -> str:
     """去掉所有 `<details>…</details>` 区间，留下"默认就看得见"的那一面。
 
-    刀 V4 需要这个取法：降级承载（`<details>`）把句子留在响应体里，`assertIn` 单查响应
+    为什么需要这个取法：降级承载（`<details>`）把句子留在响应体里，`assertIn` 单查响应
     查不出"它被折起来了"——而**影响操作的句子折起来就等于删了**。
 
     模板里有**嵌套**（others 行里那个"详情"，套在外层管理详情里）。非贪婪正则
@@ -90,6 +90,11 @@ class WebTests(unittest.TestCase):
         )
         env.start()
         self.addCleanup(env.stop)
+        # 取数改成只认「人建过的协作主题」后，这个夹具得先把自己声明成建过：走的就是界面那条路
+        # （POST /unit/create → `create_unit`，它把这条记录标成 origin=human）。
+        # 必须落在状态目录切过来之后、`create_app` 之前——早了会写进上一个状态目录，等于没声明。
+        # 下面那批断言钉的对象没变（主题页与概览长什么样），变的是夹具要把账做真。
+        unitmatch.create_unit("web-unit", self.root)
         self.client = create_app(self.root).test_client()
 
     def test_index_renders_unit_and_status(self) -> None:
@@ -920,8 +925,10 @@ class WebTests(unittest.TestCase):
 
     def test_the_overview_empty_state_points_at_creating_a_theme(self) -> None:  # A-2″（Owner 拍 §2-②）
         # 表改成只列人建标签后，"没有行"的意思变了：本机可能有工作区，但一个主题都建不起来。
-        # 取段到那张表里，免得整页响应体替我作断言面（也免得红相里塞下一屏 CSS）。
-        body = self.client.get("/").get_data(as_text=True)
+        # 取数改成谓词后，夹具默认就带着一个主题 ⇒ "空"这一格要显式把谓词置空来造。
+        # 断言面一字未减：仍是"空态那句在表里、被否掉的旧句子不在"。
+        with mock.patch("lab.unitmatch.themes", return_value=[]):
+            body = self.client.get("/").get_data(as_text=True)
         head = '<tr><th style="width:26%">协作主题</th>'
         table = body[body.index(head):]
         table = table[:table.index("</table>")]
@@ -941,6 +948,167 @@ class WebTests(unittest.TestCase):
         self.assertEqual(cells.count("它自称属于哪个协作主题"),
                          body.count("可并入这个协作主题的工作区"),
                          "列名与候选表张数不同源")
+
+    def test_the_theme_page_lists_only_themes_a_human_made(self) -> None:  # A-1
+        tree = self._two_units_one_theme()
+        body = self.client.get("/units").get_data(as_text=True)
+        cards = re.findall(r'href="[^"]*unit=([^&"]+)"[^>]*>删除这个协作主题</a>', body)
+        self.assertEqual([tree["topic_id"]], cards,
+                         "主题页把没人建过的自动身份记录也列成了协作主题（每张卡都该有一个删除口）")
+        # 回归证伪：被摘掉的那张卡仍是一个工作区，只是不再冒充协作主题——不许把它从页面上整个抹掉。
+        self.assertIn("auto-card", body)
+        # 它现在只出现在候选表那一格里，而那一格得说「没有协作主题」，不能再报一个名字。
+        # 取段从候选表那张表的标题往后找——页首「新建一个协作主题」的下拉里也有同一个目录名，
+        # 从页首取段会钉到 option 文本上，那是另一格。
+        pool = body[body.index("可并入这个协作主题的工作区"):]
+        cell = pool[pool.index("auto-card"):pool.index("auto-card") + 600]
+        self.assertIn("没有协作主题", cell, "候选表还在给自动折出来的身份记录报主题名")
+
+    def test_the_auto_card_carries_no_theme_actions(self) -> None:  # A-2
+        self._two_units_one_theme()
+        body = self.client.get("/units").get_data(as_text=True)
+        # 按实例数钉，三个动作各一个：留下的那个主题必须全有（空过＝把动作一起删了），
+        # 被摘的那张卡必须一个都没有（今天它有两套 ⇒ 计数 2）。
+        for anchor, label in (('class="reforge"', "重铸"),
+                              (">加入这个协作主题<", "加入"),
+                              (">删除这个协作主题<", "删除")):
+            self.assertEqual(1, body.count(anchor),
+                             "「%s」的实例数不等于主题块数——自动卡那块上还挂着动作" % label)
+        self.assertEqual(1, body.count("可并入这个协作主题的工作区"))
+
+    def test_the_theme_block_offers_retiring_it_to_a_plain_workspace(self) -> None:
+        """「退成纯工作区」只挂在人建的那块上，并与删除口一样折在详情里。
+
+        按实例取数：链接少一个＝出口没给；多一个＝自动卡那块又冒充了主题。
+        """
+        tree = self._two_units_one_theme()
+        body = self.client.get("/units").get_data(as_text=True)
+        links = re.findall(
+            r'href="[^"]*unit=([^&"]+)"[^>]*>退成纯工作区（身份卡与说明都留）</a>', body)
+        self.assertEqual([tree["topic_id"]], links,
+                         "退口的实例数不等于人建主题的块数")
+        self.assertNotIn("退成纯工作区", outside_details_blocks(body),
+                         "两个不可逆动作并排常驻可见面")
+
+    def test_the_retire_confirmation_shows_the_intent_it_keeps(self) -> None:
+        """确认页要把"留下什么"摊开：那句说明、哪些工作区、以及它现在还是主题。
+
+        这一页只许读账——把"看一眼确认页"变成"已经退了"，用户就找不到撤销的地方了。
+        """
+        from lab import state
+        from lab import topics as topics_mod
+
+        topic_id = topics_mod.create_topic("web-unit")["topic_id"]
+        topics_mod.set_intent("web-unit", "只看这个仓的重构讨论")
+        page = self.client.get("/units/retire/confirm?unit=%s" % topic_id).get_data(as_text=True)
+        self.assertIn("只看这个仓的重构讨论", page, "确认页没把要留下的那句话亮出来")
+        self.assertIn("工作区 1 个", page)
+        self.assertIn(self.root.as_posix(), page, "留下哪些工作区没报名字")
+        row = next(item for item in state.list_units() if item["unit_id"] == topic_id)
+        self.assertEqual("human", row.get("origin"), "确认页自己动了账")
+        self.assertIn(topic_id, [item["unit_id"] for item in unitmatch.themes()])
+
+    def test_retiring_a_theme_from_the_page_keeps_the_card_rows_and_the_intent(self) -> None:
+        """界面上退一条主题：来源改成 retired，主题从四页消失，数据一样不少。
+
+        工作区那一格单独钉——改词改账不许把机器维度一起挪走。
+        """
+        from urllib.parse import unquote
+
+        from lab import state
+        from lab import topics as topics_mod
+
+        topic_id = topics_mod.create_topic("web-unit")["topic_id"]
+        topics_mod.set_intent("web-unit", "只看这个仓的重构讨论")
+
+        def workspaces_half() -> str:
+            body = self.client.get("/").get_data(as_text=True)
+            line = body[body.index("整机口径"):]
+            return line[:line.index("、")]
+
+        kept_workspaces = workspaces_half()
+
+        denied = self.client.post("/units/retire", data={"unit": topic_id},
+                                  follow_redirects=False)
+        self.assertIn("要经过确认页", unquote(denied.headers["Location"]))
+        self.assertEqual("human", next(item for item in state.list_units()
+                                       if item["unit_id"] == topic_id).get("origin"),
+                         "不带确认标记那一步就该原样退出，不许先改了再报错")
+
+        done = self.client.post("/units/retire", data={"unit": topic_id, "confirm": "1"},
+                                follow_redirects=False)
+        self.assertIn("已退成纯工作区", unquote(done.headers["Location"]))
+
+        self.assertEqual("retired", next(item for item in state.list_units()
+                                         if item["unit_id"] == topic_id).get("origin"),
+                         "写成 card 会被谓词的存量那一支重新认成主题")
+        self.assertNotIn(topic_id, [item["unit_id"] for item in unitmatch.themes()])
+        self.assertTrue((self.root / "groma-unit.json").is_file(), "身份卡被动了")
+        self.assertEqual("只看这个仓的重构讨论", topics_mod.topic_record(topic_id)["intent"],
+                         "用户写的那句判据被退了就没回来了")
+
+        units_body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("本机还没有协作主题", units_body)
+        self.assertNotIn("退成纯工作区", units_body, "退过的东西还在主题页上挂着出口")
+        self.assertEqual(kept_workspaces, workspaces_half(),
+                         "工作区那一格跟着主题数一起掉了")
+
+    def test_a_new_theme_shows_up_before_any_intent_is_written(self) -> None:  # A-3
+        from lab import topics as topics_mod
+        fresh = Path(self._tmp.name) / "fresh-ws"
+        fresh.mkdir()
+        self.client.post("/workspaces/add", data={"path": str(fresh), "from": "discover_page"})
+        before = len(topics_mod.list_topics())
+        self.client.post("/unit/create", data={"name": "刚建的主题", "home": str(fresh)})
+        self.assertEqual(before, len(topics_mod.list_topics()),
+                         "这条要钉的是「没写说明」那一格：建主题不该顺手补 topics 行")
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("刚建的主题", body, "新建完当场看不见自己的主题——闸门只认了 topics.json 那份账")
+        index = self.client.get("/").get_data(as_text=True)
+        self.assertIn("刚建的主题", index[index.index('<tr><th style="width:26%">协作主题</th>'):],
+                      "概览那张表漏了刚建好的主题")
+
+    def test_creating_a_theme_records_that_a_human_made_it(self) -> None:  # A-5（人为这一半）
+        from lab import state
+        fresh = Path(self._tmp.name) / "marked-ws"
+        fresh.mkdir()
+        self.client.post("/workspaces/add", data={"path": str(fresh), "from": "discover_page"})
+        self.client.post("/unit/create", data={"name": "标了人的主题", "home": str(fresh)})
+        record = next(item for item in state.list_units() if item["name"] == "标了人的主题")
+        self.assertEqual("human", record.get("origin"),
+                         "人建动作没记进 units.json ⇒ 这条主题要到写说明才看得见")
+
+    def test_the_shell_chip_counts_workspaces_and_themes_apart(self) -> None:  # B-1
+        self._two_units_one_theme()
+        body = self.client.get("/units").get_data(as_text=True)
+        chip = re.search(r'工作区 <b>(\d+)</b> ｜ 协作主题 <b>(\d+)</b>', body)
+        self.assertIsNotNone(chip, "外壳那条 chip 取不到数了")
+        self.assertEqual("2", chip.group(1), "收词把机器维度一起挪走了：工作区仍按登记数计")
+        self.assertEqual("1", chip.group(2), "外壳 chip 还在数 units.json 的自动卡")
+
+    def test_a_registration_under_temp_is_badged_and_removable(self) -> None:
+        """A-3（W31b）：脚本沙箱混进清单的那种行，要在页面上认得出来、并且有去处。
+
+        按实例取段：这枚 badge 的次数必须等于"路径在临时目录下"的行数——整页 grep 会被
+        同一行里那几枚别的 badge（当前查看／启动目录）蒙过，而空集合会假绿。
+        回归证伪在同一条里：普通工作区那行不许亮这枚 badge。
+        """
+        stray = Path(self._tmp.name) / "w31-stray"
+        stray.mkdir()
+        self.client.post("/workspaces/add", data={"path": str(stray), "from": "discover_page"})
+        # 反向半边要用一个**真的不在 Temp 下**的目录：本夹具自己的根就在 Temp 里，
+        # 拿它当"普通工作区"等于让判据自己给自己作证（那条会一直绿，因为它认不出反例）。
+        plain = Path(__file__).resolve().parents[1]  # 本仓根：在盘上，不在临时目录下
+        self.client.post("/workspaces/add", data={"path": str(plain), "from": "discover_page"})
+        body = self.client.get("/discover").get_data(as_text=True)
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)
+        stray_rows = [row for row in rows if "w31-stray" in row]
+        plain_rows = [row for row in rows if plain.as_posix() in row]
+        self.assertEqual(1, len(stray_rows), "清单里找不到那行沙箱登记，判据就没法按实例数")
+        self.assertEqual(1, len(plain_rows), "对照那行也没渲染出来，回归证伪就是空集合")
+        self.assertIn("临时目录", stray_rows[0])
+        self.assertIn("移除", stray_rows[0])  # 去处复用既有那个出口，不另写第二份"能不能删"
+        self.assertNotIn("临时目录", plain_rows[0], "普通工作区被一起打上 badge ⇒ 判据认错了范围")
 
     def test_membership_date_is_converted_before_truncation(self) -> None:
         """Y4：日期先换算再截断——UTC 23:30 在本机已是次日。"""
@@ -1271,7 +1439,7 @@ class WebTests(unittest.TestCase):
         self.assertIn('aria-label="主导航"', opening.group(0))
 
     def test_observe_template_has_no_dead_blocks(self) -> None:
-        """`observe.html` 里那两个从不渲染的块要删掉（刀 V1，拍板 6：删，不修）。
+        """`observe.html` 里那两个从不渲染的块要删掉（拍板 6：删，不修）。
 
         `base.html` 只定义 `{% block body %}`，所以子模板里的 `{% block title %}` 与
         `{% block nav %}` **永远不会出现在响应里**——它是上一轮删关系图页时留下的残骸。
@@ -1290,12 +1458,12 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("{% block title %}", source)
 
     def test_shell_css_declares_sticky_rail_and_header(self) -> None:
-        """左栏与抬头要吸顶：本页 CSS 里 `position:sticky` 必须**至少出现两次**（刀 V1）。
+        """左栏与抬头要吸顶：本页 CSS 里 `position:sticky` 必须**至少出现两次**。
 
         **这条是弱断言，自标清楚**：它只钉"CSS 规则声明了两次 sticky"，
         **钉不到渲染是否真生效**——sticky 会被祖先的 `overflow` 吃掉（`.shell` 少了
         `align-items:flex-start` 时 flex 的默认 stretch 同样会让它失效）。
-        真生效与否归刀 V5 的真机项，**不许因为这条绿了就写"已验证吸顶"**。
+        真生效与否归真机几何复量，**不许因为这条绿了就写"已验证吸顶"**。
         """
         body = self.client.get("/").get_data(as_text=True)
         self.assertGreaterEqual(body.count("position:sticky"), 2)
@@ -1427,10 +1595,10 @@ class WebTests(unittest.TestCase):
             "/discover", query_string={"ws": other.as_posix()}).get_data(as_text=True))
 
     def test_no_page_outside_discover_offers_a_workspace_switcher(self) -> None:
-        """切换工作区的入口只许存在于发现页——整机口径的页面上不许出现它（刀 V2，A 类；W20 仍成立）。
+        """切换工作区的入口只许存在于发现页——整机口径的页面上不许出现它（A 类）。
 
         断言的是**反面**：`/`、`/observe`、`/units` 里连 `/discover?ws=` 这个串都不该有。
-        W20 后发现页的 `?ws=` 只剩清单行链接（切换控件改走 GET 表单的 `name=ws`），
+        发现页的 `?ws=` 只剩清单行链接（切换控件走 GET 表单的 `name=ws`），
         这条判据的字面与强度都没变。
         """
         for page in ("/", "/observe", "/units"):
@@ -1474,7 +1642,7 @@ class WebTests(unittest.TestCase):
             self.assertIn('name="ws" value="%s"' % other.as_posix(), form)
 
     def test_observe_page_links_to_the_artifact_without_wearing_it(self) -> None:
-        """观测页既不嵌 iframe、也不内联产物——产物只在 `/observe/artifact` 出现（刀 V3）。
+        """观测页既不嵌 iframe、也不内联产物——产物只在 `/observe/artifact` 出现。
 
         **把两条 iframe 测试合并成这一条**（原名
         `test_observe_page_embeds_the_artifact_in_an_iframe` 与
@@ -1501,7 +1669,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn('id="probe"', body)
 
     def test_observe_artifact_response_carries_a_self_labelled_return_bar(self) -> None:
-        """产物经 Groma 供给时顶回一条**自标身份**的返回条，且磁盘那份一个字节不少（刀 V3，A 类）。
+        """产物经 Groma 供给时顶回一条**自标身份**的返回条，且磁盘那份一个字节不少（A 类）。
 
         自标身份是设计侧复核裁定 4：注入条必须可被机器判定（`<meta name="groma-observe-return-bar">`），
         否则下一个读产物的人会拿"响应 == 磁盘文件"当不变量——而它现在不成立了。
@@ -1523,7 +1691,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("groma-observe-return-bar", artifact.read_text(encoding="utf-8"))
 
     def test_observe_artifact_injection_is_idempotent(self) -> None:
-        """返回条只许出现一次：没标记的补上，已标记的不再叠（刀 V3，A 类，两段式）。
+        """返回条只许出现一次：没标记的补上，已标记的不再叠（A 类，两段式）。
 
         **卡面把这条写成"未修版必红（今天计数 0）"——那个预测是错的**：
         如果只喂一份已带标记的产物，今天的计数就是 1（标记在我喂的文件里），测试**今天绿**，
@@ -1547,10 +1715,10 @@ class WebTests(unittest.TestCase):
         self.assertEqual(again.count('name="groma-observe-return-bar"'), 1, "已带标记的产物不许再叠一条")
 
     def test_artifact_without_a_body_tag_is_served_untouched(self) -> None:
-        """找不到 `<body` 就原样供给：宁可不救，不可救坏（刀 V3，**B 类不变量钉**）。
+        """找不到 `<body` 就原样供给：宁可不救，不可救坏（**B 类不变量钉**）。
 
         今天它是绿的——因为今天**根本没有注入**，响应天然等于文件。
-        它守的是 V3 那个注入函数写坏以后的样子：无条件插、或者把标记插到 doctype 前面，
+        它守的是供给层注入函数写坏以后的样子：无条件插、或者把标记插到 doctype 前面，
         都会让一份畸形产物被改得无法渲染。
 
         证伪手法：
@@ -1860,13 +2028,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("上次重建实测 52.4 秒",
                       self.client.get("/observe").get_data(as_text=True))
 
-    # --- 刀 V4 · 提示文字瘦身 --------------------------------------------------
+    # --- 提示文字瘦身 --------------------------------------------------
 
     def test_tooltip_is_hidden_by_display_not_by_opacity(self) -> None:
-        """ⓘ 浮窗的隐藏态必须是 `display:none`，不许退回 `opacity:0`（刀 V5 复量查出来的回归，**B 类**）。
+        """ⓘ 浮窗的隐藏态必须是 `display:none`，不许退回 `opacity:0`（真机复量查出来的回归，**B 类**）。
 
         为什么源码级断言而不是渲染断言：`git archive` 树上跑不了布局，而这条钉的恰好是布局事实——
-        绝对定位的 `::after` 即使完全透明**仍参与可滚动区域**。刀 V4 用 `opacity:0` 藏着它，
+        绝对定位的 `::after` 即使完全透明**仍参与可滚动区域**。曾用 `opacity:0` 藏着它，
         900 宽下概览页 scrollWidth 1050、把 .hint 摘掉是 885（+165 是一条看不见也摸不着的死滚动）。
         改成 display:none 后同一处量到 885；这条守卫的作用是让"顺手改回 opacity"必须过一遍这里。
 
@@ -1876,7 +2044,7 @@ class WebTests(unittest.TestCase):
         block = re.search(r"\.hint::after \{(.*?)\}", css, re.S)
         self.assertIsNotNone(block, "base.html 里找不到 .hint::after 规则")
         rule = block.group(1)
-        self.assertIn("display:none", rule, "浮窗隐藏态不是 display:none——透明不等于不占位（刀 V5 的 +165 死滚动）")
+        self.assertIn("display:none", rule, "浮窗隐藏态不是 display:none——透明不等于不占位（实测到 +165 的死滚动）")
         self.assertNotIn("opacity", rule, "隐藏态里出现 opacity 说明有人把 display:none 换回了透明方案")
 
         shown = re.search(r"\.hint:hover::after[^{]*\{([^}]*)\}", css)
@@ -1884,7 +2052,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("display:block", shown.group(1))
 
     def test_removed_design_notes_are_gone_from_the_rendered_pages(self) -> None:
-        """裁定为「删」的设计期原话必须从**响应字节**里消失（刀 V4，A 类）。
+        """裁定为「删」的设计期原话必须从**响应字节**里消失（A 类）。
 
         只查响应、不查源码，是因为承载三允许的去处就包括 Jinja `{# #}`（编译期剥掉、不进页面）
         与代码注释；**不合规的去处是 CSS `/* */`**——它会进每一页的响应，上一轮就是这么把一条
@@ -1960,7 +2128,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("确认页本身就是安全门", confirm_body)   # C2：对自己的设计辩护
 
     def test_operator_notes_that_must_stay_visible_are_not_folded(self) -> None:
-        """影响操作的句子必须留在**可见面**——折起来等于删（刀 V4，**B 类不变量钉**）。
+        """影响操作的句子必须留在**可见面**——折起来等于删（**B 类不变量钉**）。
 
         判据是"在响应里，且不在任何 `<details>…</details>` 区间内"。
         单查响应查不出折叠：降级承载就是把文本留在 `details` 里，`assertIn` 照样绿。
