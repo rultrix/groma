@@ -2,10 +2,21 @@
 {% from "_ui.html" import tip %}
 {% block body %}
 <h1>概览</h1>
+{# F11 文案正向化：三段「不是…」改写为「是…、做什么、去哪做」；实现判据细节收进 ⓘ 不删。#}
 <div class="muted" style="margin:-8px 0 14px">
-  整机口径：{{ registered|length }} 个工作区、{{ themes|length }} 个协作主题。<b>协作主题不是给工作区取名</b>——
-  它至少要收进一个<b>已经采到会话</b>的工作区，没有来源就建不出资产；<b>协作主题是行，不是开关</b>，
-  没挂进主题的目录只在「工作区」那一格里计数，要处理工作区请去<a href="{{ url_for('discover_page') }}">发现</a>。
+  整机口径：{{ registered|length }} 个工作区、{{ themes|length }} 个协作主题。
+  <b>协作主题是把已采到会话的工作区收拢成账的单位</b>：至少收进一个<b>已经采到会话</b>的工作区，就能铸出资产；
+  要处理没挂进主题的工作区，去<a href="{{ url_for('discover_page') }}">发现</a>页添加或归类。
+  {{ tip("判据：协作主题是行，不是开关，不是给工作区取名；没挂进主题的目录只在「工作区」那一格里计数") }}
+</div>
+
+{# M5 链路健康句：一句话叙述「采集→证据→服役资产→注入/送达」闭环；无服役资产显示「未设注入源」。#}
+<div class="scope-bar">
+  <b>链路健康：</b>采集{{ chain_health.collect_state }}{% if chain_health.last_write %}（{{ chain_health.last_write.created_at|local_ts("还没有跑过") }} 写入）{% endif %}
+  ｜ 证据 {{ chain_health.evidence }} 条 · 未分类 {{ chain_health.unclassified }} 条
+  ｜ {% if chain_health.serving %}服役资产 <b>{{ chain_health.serving.name }}</b>（{{ chain_health.serving.sessions }} 会话）
+  ｜ 注入 {{ chain_health.injected }}/{{ chain_health.total }} 个工作区 · {% if chain_health.delivery == "match" %}送达=当前 ✓{% elif chain_health.delivery == "stale" %}送达已过期{% else %}送达=从未{% endif %}
+  {% else %}未设注入源{% endif %}
 </div>
 
 {% if first_run_needed %}
@@ -65,6 +76,7 @@
       <div class="muted" style="margin-top:6px">
         间隔 {{ settings.collect_interval_minutes }} 分钟 · 上次写入 {{ last_write.created_at|local_ts("还没有跑过") }}
         {% if not last_write.written_by %}<b>· 来源未登记</b>{% endif %}
+        · 设置（间隔 / 归类模型 / 自动化开关）已收进<a href="{{ url_for('settings_page') }}">设置页</a>
       </div>
       {% if last_write.written_by %}
       {# I3：entry / trigger / pid 是给排障的人看的取证，折起来。
@@ -88,65 +100,12 @@
 </div>
 
 <div class="card">
-  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <span class="muted">采集间隔</span>
-    <input type="number" name="interval" min="1" max="1440" value="{{ settings.collect_interval_minutes }}"
-           style="width:84px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
-    <span class="muted">分钟</span>
-    <button type="submit" class="ghost">保存</button>
-    {{ tip("这一份设置属于整机，不再按工作区各存一份") }}
-    {% if settings.legacy_workspace_file %}
-    <span class="badge off">旧设置文件仍在 · 已不生效</span>
-    {{ tip("不覆盖、不删除：.groma/settings.json 原样留在工作区里，只是不再读它") }}
-    {% endif %}
-  </form>
-
-  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
-    <span class="muted" style="min-width:64px">归类用的模型</span>
-    <input name="classify_model" value="{{ settings.classify_model or '' }}" placeholder="Qwen3.8-Flash"
-           style="width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
-    <span class="muted" style="min-width:64px">CLI 路径</span>
-    <input name="classify_provider" value="{{ settings.classify_provider or '' }}" placeholder="留空=自动探测"
-           style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
-    <span class="muted" style="min-width:64px">身份首行</span>
-    <input name="classify_signature" value="{{ settings.classify_signature or '' }}" placeholder="Usage: qoderclicn"
-           style="width:220px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
-    <button type="submit" class="ghost">保存</button>
-    {{ tip("改完下一次归类就生效") }}
-    <div class="muted" style="flex-basis:100%;margin-top:2px">
-      归类链：最近一次尝试 {% if classify_status.attempt[1] %}<b>{{ classify_status.attempt[1]|local_ts }}</b>（{{ classify_status.attempt[0] }} · {{ classify_status.attempt[2] }}）{% else %}<b>从未</b>{% endif %}
-      ｜ 最近一次成功 {% if classify_status.success[1] %}<b>{{ classify_status.success[1]|local_ts }}</b>（{{ classify_status.success[0] }}）{% else %}<b>从未</b>{% endif %}
-      {% if classify_status.attempt[1] and classify_status.attempt[2] != "已应用" %}<span style="color:#b45309">—— 最近一次是失败</span>{% endif %}
-    </div>
-    <details class="muted">
-      <summary>命令行验证</summary>
-      验证 CLI 路径用 <code>groma provider check --path …</code>
-    </details>
-  </form>
-
-  {# 哨兵 auto_form：复选框不勾选时浏览器根本不发这个键，所以服务端只认
-     「本次提交带了 auto_form → 这两个布尔键按 ==on 无条件赋值」。
-     删掉它 = 两个开关永远关不掉（K2 的复选框陷阱）。 #}
-  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px">
-    <input type="hidden" name="auto_form" value="1">
-    <span class="muted" style="min-width:96px">花额度的自动化</span>
-    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
-      <input type="checkbox" name="auto_reforge" value="on" {% if settings.auto_reforge %}checked{% endif %}>自动重铸资产</label>
-    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
-      <input type="checkbox" name="auto_inject" value="on" {% if settings.auto_inject %}checked{% endif %}>自动投放到工作区</label>
-    <button type="submit" class="ghost">保存</button>
-    {# I8：后半句原来还带「主题页会写明未传导——不用猜」。主题页自己会写（U2 保留那句，
-       由 test_theme_page_shows_the_chain_stopped 钉），跨页指路是重复；「不用猜」是设计师口吻，删。 #}
-    <span class="muted">开着时，一次归类会顺带花额度重铸资产并投放到工作区；关掉后链路停在「已归类」。</span>
-  </form>
-</div>
-
-<div class="card">
   <table>
     <tr><th style="width:26%">协作主题</th><th>工作区</th><th>已采</th><th>未分类</th><th>上次采集</th><th></th></tr>
     {% for row in overview %}
     <tr>
-      <td><strong>{{ row.name }}</strong>{% if row.org_path %}<div class="muted">{{ row.org_path }}</div>{% endif %}<div class="muted"><code>{{ row.unit_id }}</code></div></td>
+      {# unit_ 工程键撤出可见面，收进 ⓘ（org path 保留可读）。#}
+      <td><strong>{{ row.name }}</strong>{{ tip("工程键 " ~ row.unit_id) }}{% if row.org_path %}<div class="muted">{{ row.org_path }}</div>{% endif %}</td>
       <td>{{ row.workspaces }}</td>
       <td><b>{{ row.collected }}</b></td>
       <td>{{ row.unclassified }}</td>

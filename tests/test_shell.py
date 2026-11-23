@@ -110,6 +110,7 @@ class ShellTests(unittest.TestCase):
         self.assertEqual(controller.about_url(8899), "http://127.0.0.1:8899/about")
 
         paused = controller.toggle(self.root)
+        self.addCleanup(controller.toggle, self.root)  # 会话补的卫生修复：别把共享 state 留在「已暂停」，同进程后面的测试 catchup 会被 paused 跳过
         stopped = controller.menu_items(8787, paused)
         self.assertEqual(stopped[3]["label"], "恢复采集", "暂停语义被菜单改造带走了")
 

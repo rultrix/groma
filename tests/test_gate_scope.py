@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import statebox  # noqa: F401  -- must land before any lab import touches state
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from lab import inject, topics
@@ -45,3 +48,44 @@ class GateScopeTests(unittest.TestCase):
             gate = inject.gate_state("unit_x", _asset())
         self.assertEqual(gate["evidence_scope"], "unit")
         self.assertEqual(gate["state"], "serving")
+
+class GateProjectionEquivalenceTests(unittest.TestCase):
+    """B 类不变量：源升主题级后，投影 manifest 里的 gate 与 gate_state 直算相等。"""
+
+    def setUp(self) -> None:
+        import tempfile
+        from unittest import mock
+
+        from lab import unitmatch
+        from lab.asset import build_asset
+        from lab.collect import catchup
+        from lab.sources import add_source
+        from lab.workspace import init_workspace, load_unit
+
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-gate-equiv-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.home = base / "home"
+        self.home.mkdir()
+        init_workspace(self.home, name="闸门等价")
+        src = base / "src"
+        (src / "projects").mkdir(parents=True)
+        (src / "projects" / "s.jsonl").write_text(
+            '{"timestamp": "2026-11-02T09:00:00Z", "cwd": "%s"}\n' % self.home.as_posix(),
+            encoding="utf-8", newline="\n")
+        add_source(self.home, "qoder", str(src), "qoder-cn", ["projects"])
+        catchup(self.home, force=True)
+        self.asset = build_asset(self.home, "等价资产", [("qoder", "projects/s.jsonl")])
+        self.unit_id = load_unit(self.home)["unit_id"]
+        self._mock = mock
+
+    def test_the_projected_manifest_gate_equals_a_direct_gate_state_call(self) -> None:
+        out = inject.inject_theme(self.unit_id, self.asset["asset_id"])
+        self.assertTrue(out["workspaces"])
+        for workspace in out["workspaces"]:
+            book = json.loads(
+                (Path(workspace["workspace"]) / ".groma" / "injections" / "manifest.json")
+                .read_text(encoding="utf-8"))
+            direct = inject.gate_state(self.unit_id, self.asset)
+            self.assertEqual(book["gate"]["state"], direct["state"])
+            self.assertEqual(book["gate"]["evidence_scope"], direct["evidence_scope"])

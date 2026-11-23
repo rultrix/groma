@@ -14,7 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = ("lab", "web", "tests", "tools", "groma_shell")
 SCAN_SUFFIXES = {".py", ".html", ".css", ".js"}
 
-BUILD_NUMBER = re.compile("刀 ?[VWKR]" + r"\d+[a-z]?" + "|任务书 §" + r"\d+")
+# 发布管线自己的扫描器（tools/release/）**必须**写出它要抓的词，否则抓不到；
+# 而那份文件不进公开树（公开快照脚本自己说明过）。所以它整体豁免，不参与本守卫。
+SCAN_EXEMPT_DIRS = ("tools/release",)
+
+BUILD_NUMBER = re.compile(
+    "刀 ?[VWKR]" + r"\d+[a-z]?"          # 旧编号：字母+数字
+    + "|(?<![A-Za-z0-9_])(?:U|T)" + r"\d{1,2}[a-z]?"   # 期号/刀号（字母+数字）
+    + "|裁定 ?" + r"\d+"                 # 裁定编号
+    + "|任务书 §" + r"\d+"               # 任务书章节号
+)
 
 
 def build_number_hits():
@@ -27,10 +36,13 @@ def build_number_hits():
         for path in sorted(base.rglob("*")):
             if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
                 continue
+            rel = path.relative_to(ROOT).as_posix()
+            if any(rel == d or rel.startswith(d + "/") for d in SCAN_EXEMPT_DIRS):
+                continue
             text = path.read_text(encoding="utf-8", errors="replace")
             for lineno, line in enumerate(text.splitlines(), 1):
                 if BUILD_NUMBER.search(line):
-                    found.append((path.relative_to(ROOT).as_posix(), lineno, line.strip()))
+                    found.append((rel, lineno, line.strip()))
     return found
 
 

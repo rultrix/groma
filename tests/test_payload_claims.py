@@ -98,3 +98,28 @@ class PayloadClaimsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MaterialReferenceRenderingTests(unittest.TestCase):
+    """活引用渲染：载荷只给一句 claim + 指路（全文见 …（施工前必读）），不搬正文。"""
+
+    def test_a_material_claim_points_instead_of_carrying_the_text(self) -> None:
+        material_claim = {
+            "title": "任务书要求：注入源升主题级",
+            "material": {"locator": {"scheme": "ws-rel", "ref": "docs/tasks/W42.md"},
+                         "role": "task-spec", "snapshot_sha256": "a" * 64},
+            "state": "verified",
+        }
+        text = surface.project_text(unit(), rows(), asset([material_claim]), rows()[0]["path"])
+        self.assertIn("全文见 `docs/tasks/W42.md`（施工前必读）", text)
+        self.assertIn("任务书要求：注入源升主题级", text)
+        self.assertNotIn("quote", text)  # 指针不搬运：正文不进载荷
+
+    def test_a_stale_material_claim_does_not_render(self) -> None:
+        material_claim = {
+            "title": "过期材料",
+            "material": {"locator": {"scheme": "ws-rel", "ref": "docs/gone.md"}, "role": None},
+            "state": "stale",
+        }
+        text = surface.project_text(unit(), rows(), asset([material_claim]), rows()[0]["path"])
+        self.assertNotIn("docs/gone.md", text, "stale 的活引用不许渲染")

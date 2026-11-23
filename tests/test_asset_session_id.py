@@ -109,7 +109,7 @@ class AssetCitesIt(unittest.TestCase):
         self.digest([{"path": CODEX}])
         asset = build_asset(self.home, "取正文", [("codex", CODEX)])
         self.assertEqual(asset["sessions"][0]["session_id"], UUID)
-        readme = (self.home / ".groma" / "assets" / asset["asset_id"] / "README.md").read_text(encoding="utf-8")
+        readme = (self.home / ".groma" / "assets" / "current" / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("rollout-2026-08-10T17-34-36", readme)
 
     def test_the_asset_id_does_not_move_when_the_id_spelling_changes(self) -> None:

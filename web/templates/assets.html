@@ -1,18 +1,20 @@
 {% extends "base.html" %}
-{% from "_ui.html" import tip %}
+{% from "_ui.html" import tip, handoff_moment %}
 {% block body %}
-<h1>上下文资产草稿</h1>
+{# 「草稿」从标题退场；「删除草稿」动词随草稿一并退役。#}
+<h1>上下文资产</h1>
 <div class="muted" style="margin:-8px 0 14px">
-  按协作主题记账：一块＝一个主题，草稿都写进它自己的家。资产只含结构与出处——没有正文、没有 cwd、没有绝对路径。{{ tip("每份草稿都写进它所属协作主题的家") }}
+  按协作主题记账：一块＝一个主题，资产恒一份（单槽，写进它自己的家）。资产只含结构与出处——没有正文、没有 cwd、没有绝对路径。{{ tip("每份资产都写进它所属协作主题的家") }}
 </div>
 
 {% for block in asset_blocks %}
 <div class="card" data-topic="{{ block.topic_id }}">
   <div class="block-head">
     <div class="muted">
-      <strong>{{ block.topic }}</strong>
+      {# 命名统一（M3/M4/Q3）：显示名唯一来源=topics 标签，工程键进 ⓘ。#}
+      <strong>{{ block.display_name }}</strong>{{ tip("工程键 " ~ block.topic_id) }}
       {% if block.home %} · 家 <code>{{ block.home }}</code>{% else %} · <b style="color:#b45309">还没有家目录</b>{% endif %}
-      · {{ block.members }} 个工作区 · {{ block.assets|length }} 份草稿
+      · {{ block.members }} 个工作区 · {{ block.assets|length }} 份资产
     </div>
     {% if block.home %}
     {# 原来 inline 在文字流里、白底 12px，认不出是按钮。 #}
@@ -20,18 +22,28 @@
       <form method="post" action="{{ url_for('topic_reforge') }}">
         <input type="hidden" name="unit" value="{{ block.topic_id }}">
         <input type="hidden" name="from" value="assets">
-        <button type="submit" class="reforge">重铸</button>
+        {# 重铸按钮补悬停提示（P3 · M1 措辞对齐，不改按钮文字）。#}
+        <button type="submit" class="reforge" title="按主题说明重铸——没变不重铸；别人的资产绝不顶掉">重铸</button>
       </form>
     </span>
     {% endif %}
   </div>
-  {% if block.assets %}
+  {# 资产页顶部接力时机位（屏 5 note 点名）——与 units 接力卡同一张时刻卡
+     （同一宏同一形状，同一套 detect_handoff 现成件）；无 pending 不渲染。#}
+  {% if block.handoff %}
+  <div style="margin-top:10px">{{ handoff_moment(block.handoff, url_for('units_handoff_ignore')) }}</div>
+  {% endif %}
+  {# 单资产账面——一主题恒一份四件套（单槽），历史折叠区退役，
+     追溯唯一权威=下方重铸账本（母本 §13）。#}
   <table>
     <tr><th>资产</th><th>状态</th><th>会话</th><th>事件</th><th>生成时间</th><th></th></tr>
     {% for a in block.assets %}
     <tr>
       <td><strong>{{ a.title }}</strong><br><code>{{ a.asset_id }}</code></td>
-      <td><span class="badge off">{{ a.status }}</span></td>
+      <td>{% if a.asset_id in block.serving_ids %}<span class="badge on">服役中</span>
+          {% else %}<span class="badge off">未服役</span>{% endif %}
+        {% if a.claims %}<div class="muted" style="margin-top:4px">引文 {{ a.claims|length }} 条（{{ a.claims|selectattr("state","equalto","verified")|list|length }} 有效）</div>{% endif %}
+      </td>
       <td>{{ a.totals.sessions }}</td>
       <td>{{ a.totals.events }}</td>
       <td class="muted">{{ a.generated_at|local_ts }}</td>
@@ -42,16 +54,8 @@
           <input type="hidden" name="path" value="{{ block.home }}">
           <button type="submit" class="ghost">导出 CONTEXT.md</button>
         </form>
-        <form method="post" action="{{ url_for('unit_inject_apply') }}" style="margin-top:6px">
-          <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
-          <input type="hidden" name="path" value="{{ block.home }}">
-          {# 带上这一块的主题 id，注入的作用域不再由"当前聚焦"或落点卡片推断。 #}
-          <input type="hidden" name="unit" value="{{ block.topic_id }}">
-          <button type="submit" class="ghost">注入到这里</button>
-        </form>
         {% if a.claims %}
-        <div class="muted" style="margin-top:6px">引文 {{ a.claims|length }} 条（{{ a.claims|selectattr("state","equalto","verified")|list|length }} 有效）</div>
-        <form method="post" action="{{ url_for('assets_verify') }}" style="margin-top:4px">
+        <form method="post" action="{{ url_for('assets_verify') }}" style="margin-top:6px">
           <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
           <input type="hidden" name="path" value="{{ block.home }}">
           <button type="submit" class="ghost">核对锚点</button>
@@ -63,83 +67,126 @@
       </td>
     </tr>
     {% endfor %}
+    {% if not block.assets %}<tr><td colspan="6" class="muted">本协作主题的家还没有资产——右上「重铸」铸第一份。</td></tr>{% endif %}
   </table>
-  {% else %}
-  <div class="muted">这个协作主题还没有资产草稿。下面勾选会话即可生成。</div>
+
+  {# 重铸账本摘要行——唯一权威=topic_reforges.jsonl（时刻/指纹/会话数/selection/skipped 全在账）。#}
+  {% if block.reforges %}
+  {% set latest = block.reforges[-1] %}
+  <div class="muted" style="margin-top:8px">重铸账本：共 {{ block.reforges|length }} 笔 · 最近笔 {{ latest.at|local_ts }} · <code>{{ (latest.asset_id or "—")[:12] }}</code> · 会话 {{ latest.sessions }}</div>
+  <details style="margin-top:6px">
+    <summary class="muted" style="cursor:pointer">最近 5 笔 ▸</summary>
+    <table style="margin-top:8px">
+      <tr><th>时刻</th><th>指纹</th><th>会话</th><th>带入引文</th><th>失效引文</th></tr>
+      {% for r in block.reforges[-5:]|reverse %}
+      <tr>
+        <td class="muted">{{ r.at|local_ts }}</td>
+        <td><code>{{ (r.asset_id or "—")[:12] }}</code></td>
+        <td>{{ r.sessions }}</td>
+        <td class="muted">{{ r.inherited_claims if r.inherited_claims is defined else "—" }}</td>
+        <td class="muted">
+          {% set buckets = r.skipped_claims or {} %}
+          {% if buckets %}{% for k, v in buckets.items() %}{{ k }}×{{ v }}{{ "、" if not loop.last }}{% endfor %}
+          {% elif r.skipped_claims is defined %}0{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </details>
+  {% endif %}
+
+  {# 屏 7：按受众预览载荷——现算投影（project_text_for：角色视角句+净增益折叠自动在内），
+     asset.json 一个字节不动；无服役资产的块不渲染。盒序=主题见过的 harness（≤4，超出前 3+另有 N），
+     无装载面的 harness 不出盒。#}
+  {% if block.payload_boxes %}
+  <details style="margin-top:10px">
+    <summary class="muted" style="cursor:pointer">按受众预览载荷 ▸</summary>
+    <div class="payload-row">
+      {% for b in block.payload_boxes %}
+      <div class="payload">
+        <div><b>① 给 {{ b.harness }}{% if b.role %}（{{ b.role }}视角）{% endif %}</b>
+          <span class="badge off">{{ b.face }} · {{ b.chars }} 字</span></div>
+        <div class="pbody">{{ b.text }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if block.payload_overflow %}<div class="muted" style="margin-top:6px">另有 {{ block.payload_overflow }} 个 harness 未展开。</div>{% endif %}
+    <div class="muted" style="margin-top:8px">投影是现算的（refresh 时按受众重渲染），资产本身不变——资产（证据池+claims）不动，载荷 = f(受众)。四件套与对外发布物不受投影影响。</div>
+  </details>
   {% endif %}
 </div>
 {% endfor %}
 {% if not asset_blocks %}<div class="card muted">本机还没有协作主题。先去<a href="{{ url_for('units_page') }}">协作主题</a>页建一个。</div>{% endif %}
 
-{# AS2：项目所有者 拍板 3 说这段**不折叠**——「第一次要手动点一次」「没变不重铸」「绝不顶掉」
-   三句留在默认看得见的那一面（由 test_operator_notes_that_must_stay_visible_are_not_folded 钉可见面，
-   不只钉响应体）。折进 details 的是**原理**，不是结论。
-   原句里那句「（都在既有设计里，不是新规矩）」删——它对我们的设计过程说话，不对用户说话；
-   裁定与理由留在 PROPOSAL §4.5 AS2。 #}
+{# AS2：项目所有者 拍板 3 说这段**不折叠**——三条仍留在默认看得见的那一面
+   （由 test_operator_notes_that_must_stay_visible_are_not_folded 钉可见面）。
+   首句改新话（注入跟随机器设置自动走；唯一手工动作=重新投放），
+   两条护栏原句不动；折进 details 的是**原理**，不是结论。#}
 <div class="card muted">
-  <b>第一次要手动点一次</b>「注入到这里」，之后才会自动跟着换。
+  {# 资产行「注入到这里」收口到主题页；注入跟随机器设置自动走。#}
+  注入跟随机器设置自动走；<b>唯一手工动作=重新投放</b>。
   两条护栏：<b>没变不重铸</b>；<b>别人的资产绝不顶掉</b>。
   <details>
     <summary>这两条怎么起作用</summary>
-    没变不重铸——证据集一样就跳过，不会每天造一份内容相同的资产；<br>
+    没变不重铸——证据集一样就跳过（指纹相同不写盘），不会每天造一份内容相同的资产；<br>
     别人的资产绝不顶掉——只有当这个工作区当前的注入源<b>本来就是这个协作主题自己的</b>资产时，自动重铸才会接手。
   </details>
 </div>
 
 <div class="card">
-  <div style="font-weight:700;margin-bottom:8px">从会话生成草稿</div>
-  <form method="post" action="{{ url_for('assets_build') }}">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <input name="title" placeholder="资产标题（必填）" required
-             style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
-      <input name="note" placeholder="备注（可选）"
-             style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
-    </div>
-
-    <div class="muted" style="margin:12px 0 6px">
-      勾选要作为依据的会话（本协作主题的 {{ unit_workspaces|length }} 个工作区并集，按末次活跃排序，最多 200 条）：
-    </div>
-    <div style="max-height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px">
-      {% for s in sessions[:200] %}
-      <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;font-size:13px">
-        <input type="checkbox" name="session" value="{{ s.source }}:{{ s.path }}">
-        <span style="min-width:120px">{{ s.agent_name }}</span>
-        <span class="muted" style="flex:1">{{ s.path }}</span>
-        <span class="muted">{{ s.events }} 事件{% if s.transcript is sameas false %} · 无 transcript{% endif %}</span>
-      </label>
-      {% endfor %}
-      {% if not sessions %}<div class="muted">还没有会话。先采集。</div>{% endif %}
-    </div>
-
-    <div style="margin-top:12px"><button type="submit">生成草稿</button></div>
-  </form>
-  <div class="muted" style="margin-top:8px">
-    {% if home_path %}草稿写进本协作主题的家：<code>{{ home_path }}</code>；导出前需要人工复核。
-    {% else %}这个协作主题还没有家目录——先在主题页指定一个，再回来生成草稿。{% endif %}
-  </div>
-</div>
-
-<div class="card">
-  <div style="font-weight:700;margin-bottom:8px">给草稿落一条引文（人工档）</div>
+  <div style="font-weight:700;margin-bottom:8px">给资产落一条引文（人工档）</div>
   <div class="muted" style="margin-bottom:8px">
     人给「结论句 + 会话键 + 时间区间」，工具只做定位、核对、渲染。落锚前整批核对——任何一条对不上，资产一个字节都不改。
     会话键形如 <code>qoder:0f06e741-…</code>（vault 索引里的键）；时间区间用 UTC，如 <code>2026-11-20T03:11:02Z</code>。
+    落锚恒写当前槽资产——不再选资产。
   </div>
   <form method="post" action="{{ url_for('assets_anchor') }}">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-      <input name="asset_id" placeholder="asset id（必填）" required
-             style="flex:1;min-width:220px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
       <input name="title" placeholder="结论句（必填）" required
-             style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+             style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <input name="session_key" placeholder="会话键（必填）" required
-             style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
-      <input name="from_ts" placeholder="起始 UTC（必填）" required
+      {# 屏4：会话详情块级「落锚」跳转过来时预填（anchor_prefill），不新增端点。#}
+      {# 资产下拉退役——会话键按块平铺，服务端恒写当前槽。#}
+      <select name="session_key"
+              style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        {% if anchor_prefill.session_key %}
+        <option value="{{ anchor_prefill.session_key }}" selected>{{ anchor_prefill.session_key }}（自会话详情预填）</option>
+        {% endif %}
+        <option value="" {% if not anchor_prefill.session_key %}disabled selected{% endif %}>选择会话（按当前槽资产依据列出的 vault 会话键）</option>
+        {% for ab in asset_blocks %}{% for key in ab.anchor_keys %}{% if key != anchor_prefill.session_key %}
+        <option value="{{ key }}">{{ key }}</option>
+        {% endif %}{% endfor %}{% endfor %}
+      </select>
+      <select name="preset" style="min-width:150px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        <option value="last-turn">末回合</option>
+        <option value="last-5-min">末 5 分钟</option>
+        <option value="last-30-min">末 30 分钟</option>
+        <option value="custom" {% if anchor_prefill.from_ts %}selected{% endif %}>自定义区间</option>
+      </select>
+      <input name="from_ts" value="{{ anchor_prefill.from_ts }}" placeholder="起始 UTC（自定义时必填）"
              style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
-      <input name="to_ts" placeholder="截止 UTC（必填）" required
+      <input name="to_ts" value="{{ anchor_prefill.to_ts }}" placeholder="截止 UTC（自定义时必填）"
              style="flex:1;min-width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
     </div>
+    {% if anchor_prefill.quote %}
+    <div class="muted" style="margin-top:6px">将落引文（块内全文，来自会话详情预填）：<code>{{ anchor_prefill.quote[:160] }}{% if anchor_prefill.quote|length > 160 %}…{% endif %}</code></div>
+    {% endif %}
+    <div class="muted" style="margin-top:6px">预设窗口按 vault 里该会话最后一条记录的时刻算；自定义区间用 UTC（如 <code>2026-11-21T03:00:00Z</code>）。</div>
+    <details style="margin-top:8px">
+      <summary class="muted" style="cursor:pointer">或挂一条材料活引用（指针，不搬运正文）</summary>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <input name="material_ref" placeholder="工作区相对路径，如 docs/tasks/W42.md"
+               style="flex:2;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+        <select name="material_role" style="min-width:160px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+          <option value="">角色（可留空）</option>
+          <option value="task-spec">task-spec</option>
+          <option value="review-notes">review-notes</option>
+          <option value="release">release</option>
+        </select>
+      </div>
+      <div class="muted" style="margin-top:4px">与引文区间二选一或都挂，不许都不挂；只收工作区相对路径（绝对路径/凭据会拒）；落锚时算文件指纹，文件变了走诚实账不阻断。</div>
+    </details>
     <div style="margin-top:12px"><button type="submit">落锚</button></div>
   </form>
 </div>

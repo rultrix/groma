@@ -181,6 +181,94 @@ class ClaimAssetTests(unittest.TestCase):
         with self.assertRaises(LabError):
             verify_claims(self.home, self.asset_id, vault_root=self.vault_root)
 
+    def test_a_draft_can_be_deleted_whole_and_only_a_draft(self) -> None:
+        from lab.asset import delete_asset
+
+        folder = find_asset(self.home, self.asset_id)
+        self.assertIsNotNone(folder)
+        out = delete_asset(self.home, self.asset_id)
+        self.assertTrue(out["removed"])
+        self.assertFalse(folder.exists())
+        with self.assertRaises(LabError):
+            delete_asset(self.home, self.asset_id)  # already gone
+        # a claim-anchored asset is still a draft -- deletable, quotes and all
+        twin = build_asset(self.home, "可删的引文草稿", [("qoder", "projects/s.jsonl")])
+        attach_claims(self.home, twin["asset_id"], [self.claim], vault_root=self.vault_root)
+        delete_asset(self.home, twin["asset_id"])
+        self.assertIsNone(find_asset(self.home, twin["asset_id"]))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MaterialReferenceTests(unittest.TestCase):
+    """材料活引用：指针不搬运；locator 红线延伸；snapshot 诚实账不阻断。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-asset-material-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.home = base / "home"
+        self.home.mkdir()
+        init_workspace(self.home, name="材料资产")
+        (self.home / "docs" / "tasks").mkdir(parents=True)
+        (self.home / "docs" / "tasks" / "W42.md").write_text("任务书正文 v1\n", encoding="utf-8")
+        src = self.home / "src-sessions"
+        (src / "projects").mkdir(parents=True)
+        (src / "projects" / "s.jsonl").write_text(
+            '{"timestamp": "2026-11-10T09:00:00Z", "cwd": "%s"}\n' % self.home.as_posix(),
+            encoding="utf-8", newline="\n")
+        from lab.collect import catchup
+        from lab.sources import add_source
+
+        add_source(self.home, "qoder", str(src), "qoder-cn", ["projects"])
+        catchup(self.home, force=True)
+        self.asset = build_asset(self.home, "材料试跑", [("qoder", "projects/s.jsonl")])
+        self.asset_id = self.asset["asset_id"]
+
+    def _attach(self, claim: dict) -> dict:
+        return attach_claims(self.home, self.asset_id, [claim])
+
+    def test_a_material_claim_attaches_with_a_computed_snapshot(self) -> None:
+        out = self._attach({"title": "任务书要求注入源升主题级",
+                            "material": {"locator": {"scheme": "ws-rel", "ref": "docs/tasks/W42.md"},
+                                         "role": "task-spec"}})
+        self.assertEqual(out["attached"], 1)
+        asset = json.loads((find_asset(self.home, self.asset_id) / "asset.json").read_text(encoding="utf-8"))
+        claim = asset["claims"][0]
+        self.assertEqual(claim["material"]["locator"]["scheme"], "ws-rel")
+        self.assertEqual(claim["material"]["locator"]["ref"], "docs/tasks/W42.md")
+        self.assertEqual(claim["material"]["role"], "task-spec")
+        self.assertEqual(claim["material"]["snapshot_sha256"],
+                         hashlib.sha256((self.home / "docs" / "tasks" / "W42.md").read_bytes()).hexdigest())
+        self.assertEqual(asset["asset_id"], self.asset_id, "材料不参与 asset_id 推导")
+
+    def test_the_locator_red_lines_refuse(self) -> None:
+        """红线延伸：绝对路径 / URL / 凭据 / 越出工作区，全部拒，资产一个字节不改。"""
+        for bad in ("C:/abs/path.md", "/abs/path.md", "https://x/y.md", "user@host/x.md", "../outside.md"):
+            with self.assertRaises(LabError):
+                self._attach({"title": "坏指针", "material": {"locator": {"scheme": "ws-rel", "ref": bad}}})
+        with self.assertRaises(LabError):
+            self._attach({"title": "坏 scheme", "material": {"locator": {"scheme": "org", "ref": "a.md"}}})
+        asset = json.loads((find_asset(self.home, self.asset_id) / "asset.json").read_text(encoding="utf-8"))
+        self.assertEqual(asset.get("claims") or [], [], "被拒的 claim 不许留半个")
+
+    def test_a_claim_without_quote_or_material_is_invalid(self) -> None:
+        """claim 无 quote 且无 material ⇒ 无效，整批拒。"""
+        with self.assertRaises(LabError):
+            self._attach({"title": "空 claim"})
+
+    def test_snapshot_drift_is_an_honest_ledger_not_a_blocker(self) -> None:
+        """snapshot 对不上：诚实账标记（material_drift），不阻断、不降级 stale、不阻止文件变化。"""
+        self._attach({"title": "任务书", "material": {"locator": {"scheme": "ws-rel", "ref": "docs/tasks/W42.md"},
+                                                      "role": "task-spec"}})
+        (self.home / "docs" / "tasks" / "W42.md").write_text("任务书正文 v2\n", encoding="utf-8")
+        result = verify_claims(self.home, self.asset_id)
+        self.assertEqual(result["material_drift"], ["任务书"], "文件变了要记账")
+        self.assertEqual(result["stale"], [])
+        asset = json.loads((find_asset(self.home, self.asset_id) / "asset.json").read_text(encoding="utf-8"))
+        self.assertEqual(asset["claims"][0]["state"], "verified", "指针不搬运，不降级")
+        # 第二次核对（文件没再变）不再记新账
+        result = verify_claims(self.home, self.asset_id)
+        self.assertEqual(result["material_drift"], ["任务书"])

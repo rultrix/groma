@@ -365,3 +365,47 @@ def project_text(unit: dict, rows: list[dict], asset: dict, viewed_from: str) ->
             if omitted:
                 lines += ["", "另见 CONTEXT.md：还有 %d 条结论未入载荷（预算内放不下或未核对）。" % omitted]
     return "\n".join(lines)
+
+# -- 载荷投影：载荷 = f(受众)，现算不是存储 -------------------------------
+
+# 块面/载荷通道 → harness：投影按 harness 查角色表，通道本来就按 harness 分。
+HARNESS_BY_FACE = {
+    "claude-md": "claude-code",
+    "codex-agents": "codex",
+    "hook": "qoder-cn",
+    "qoder-rule": "qoder-cn",
+}
+
+# 角色视角句（角色表的语义；未配表 = 不插视角句，零配置可用）。
+ROLE_VIEWS = {
+    "任务书": "本载荷按「任务书」视角渲染：范围与判据为先。",
+    "施工": "本载荷按「施工」视角渲染：以任务书为先。",
+    "验收": "本载荷按「验收」视角渲染：以施工产出与偏差为先。",
+}
+
+# 净增益阈值：某成员会话占比 ≥50% 且 条数 ≥3 时折叠为一句；
+# 折叠不删证据（README/四件套不受投影影响）。
+FOLD_MIN_COUNT = 3
+FOLD_MIN_SHARE = 0.5
+
+
+def project_text_for(unit: dict, rows: list[dict], asset: dict, viewed_from: str,
+                     harness: str | None = None, role: str | None = None,
+                     viewer_session_ids: set[str] | None = None) -> str:
+    """project_text 的受众版：角色视角句 + 净增益折叠；不传受众参数 = 原样。
+
+    asset.json 一个字节都不改——投影是现算的；四件套与对外发布物不受影响。
+    """
+    lines = project_text(unit, rows, asset, viewed_from).split("\n")
+    view = ROLE_VIEWS.get(str(role or ""))
+    if view:
+        # 插在标题之后，只动投影产物，不动任何存储
+        lines.insert(1, "")
+        lines.insert(2, view)
+    sessions = asset.get("sessions") or []
+    if viewer_session_ids and sessions:
+        total = len(sessions)
+        mine = sum(1 for item in sessions if item.get("session_id") in viewer_session_ids)
+        if mine >= FOLD_MIN_COUNT and total and mine / total >= FOLD_MIN_SHARE:
+            lines += ["", "%d 条里 %d 条来自你——已折叠。" % (total, mine)]
+    return "\n".join(lines)

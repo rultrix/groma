@@ -5,7 +5,7 @@ Two things are being pinned here:
 - the commands work (A class: the commands do not exist before this cut), and
 - `Groma` goes through **the same functions** as the web routes -- the orchestration
   (and with it the two guards) lives in `lab/inject.py`, so both surfaces inherit
-  it instead of re-implementing it (裁定 7).
+  it instead of re-implementing it.
 """
 
 from __future__ import annotations

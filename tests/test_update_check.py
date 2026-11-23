@@ -1,4 +1,4 @@
-"""更新检查判据（U1–U9，U9 = D1 兑现后的默认仓库钉）。
+"""更新检查判据（D1 兑现后的默认仓库钉）。
 
 全部用注入的 `fetch`，**一条都不真出网**；仓库通过 `GROMA_RELEASE_REPO` 夹具注入。
 跑法：`./.venv/Scripts/python.exe -m unittest discover -s tests -p test_update_check.py -v`
@@ -33,14 +33,14 @@ def payload(tag="0.54.0", prerelease=False, assets=("groma-0.54.0-windows-x64.zi
 
 
 class RepoConfigTests(unittest.TestCase):
-    def test_check_update_requires_configured_repo(self) -> None:  # U1
+    def test_check_update_requires_configured_repo(self) -> None:
         calls = []
 
         def fetch(request):
             calls.append(request)
             raise AssertionError("未配置仓库时不许出网")
 
-        # D1 兑现后 repo=None 表示"用默认仓库"（默认值另有其钉，见 U9）；
+        # D1 兑现后 repo=None 表示"用默认仓库"（默认值另有其钉，见既有测试；
         # 这里只钉显式空串与非法值仍不配置、不出网。
         for repo in ("", "just-a-name"):
             result = update.check_latest(repo=repo, fetch=fetch)
@@ -57,7 +57,7 @@ class RequestShapeTests(unittest.TestCase):
         self.requests.append(request)
         return payload()
 
-    def test_check_update_uses_get_and_sends_no_local_payload(self) -> None:  # U2
+    def test_check_update_uses_get_and_sends_no_local_payload(self) -> None:
         result = update.check_latest(repo="owner/repo", current="0.53.0", fetch=self.fake_fetch)
         self.assertEqual(len(self.requests), 1)
         request = self.requests[0]
@@ -69,9 +69,9 @@ class RequestShapeTests(unittest.TestCase):
         for leak in (str(Path.home()), os.getcwd(), "unit_", "session", "vault"):
             self.assertNotIn(leak.lower(), blob.lower(), "请求里带了本机信息：%s" % leak)
         self.assertEqual(result["state"], "update_available",
-                         "0.53.0 对 0.54.0 该报有新版；比较本身由 U4 钉，这里只验取数通了")
+                         "0.53.0 对 0.54.0 该报有新版；比较本身由既有测试钉，这里只验取数通了")
 
-    def test_release_tag_normalizes_v_prefix(self) -> None:  # U3
+    def test_release_tag_normalizes_v_prefix(self) -> None:
         self.assertEqual(update.parse_tag("v0.54.0"), (0, 54, 0))
         self.assertEqual(update.parse_tag("0.54.0"), (0, 54, 0))
         self.assertIsNone(update.parse_tag("0.54"))
@@ -83,13 +83,13 @@ class RequestShapeTests(unittest.TestCase):
 
 
 class CompareAndStateTests(unittest.TestCase):
-    def test_version_compare_is_numeric_not_lexicographic(self) -> None:  # U4
+    def test_version_compare_is_numeric_not_lexicographic(self) -> None:
         # "0.9.0" > "0.54.0" 在字符串序里成立；按数字序才是 0.54.0 更新
         result = update.check_latest(repo="o/r", current="0.9.0",
                                      fetch=lambda request: payload("0.54.0"))
         self.assertEqual(result["state"], "update_available")
 
-    def test_bad_response_is_visible_error(self) -> None:  # U6
+    def test_bad_response_is_visible_error(self) -> None:
         for body in (json.dumps({"html_url": "x"}), json.dumps({"tag_name": "0.54"}),
                      json.dumps([1, 2]), "not json"):
             result = update.check_latest(repo="o/r", current="0.53.0",
@@ -97,7 +97,7 @@ class CompareAndStateTests(unittest.TestCase):
             self.assertEqual(result["state"], "bad_response", body)
             self.assertTrue(result["error"], "失败必须带原因")
 
-    def test_network_failure_is_visible_error(self) -> None:  # U7
+    def test_network_failure_is_visible_error(self) -> None:
         def boom(request):
             raise urllib.error.URLError("getaddrinfo failed")
 
@@ -110,7 +110,7 @@ class CompareAndStateTests(unittest.TestCase):
                                      fetch=lambda request: payload("0.54.0", prerelease=True))
         self.assertEqual(result["state"], "prerelease_available")
 
-    def test_up_to_date_persists_checked_at_utc(self) -> None:  # U5
+    def test_up_to_date_persists_checked_at_utc(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "unit"
             root.mkdir()
@@ -135,7 +135,7 @@ class CompareAndStateTests(unittest.TestCase):
 
 
 class NoSilentNetworkTests(unittest.TestCase):
-    def test_startup_and_create_app_do_not_call_update_network(self) -> None:  # U8
+    def test_startup_and_create_app_do_not_call_update_network(self) -> None:
         try:
             from web.app import create_app
         except ImportError:  # pragma: no cover
@@ -181,7 +181,7 @@ class NoSilentNetworkTests(unittest.TestCase):
 
 
 class DefaultRepoTests(unittest.TestCase):
-    def test_default_repo_is_public_release_and_env_overrides(self) -> None:  # U9
+    def test_default_repo_is_public_release_and_env_overrides(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("GROMA_RELEASE_REPO", None)
             self.assertEqual(importlib.reload(update).RELEASE_REPO, "rultrix/groma")

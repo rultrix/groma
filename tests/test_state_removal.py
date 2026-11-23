@@ -87,8 +87,16 @@ class WorkspaceRemovalTests(unittest.TestCase):
         unitmatch.sync_units()
         return folder
 
-    def test_a_leftover_card_revives_the_unit_when_the_folder_reopens(self) -> None:
+    def test_deleted_topic_does_not_revive_when_folder_reopens(self) -> None:
+        """退役复活语义（原为「遗留卡让目录重开即复活」，钉旧行为非背书）。
+
+        删掉的主题，目录重开**不**复活——身份卡只证工作区身份，
+        不再折出协作主题行。`load_unit` 走卡兜底仍能读出身份（那是"这个目录是谁的"），
+        但账里不许再有这条主题。
+        """
         folder = self._folder_with_card("revive", UNIT_ID)
+        # 先是人建的主题行（create_unit 等价物：origin=human 是人说过的话），删它才有"删掉的主题"可言
+        state.upsert_unit(UNIT_ID, name="revive", origin="human")
         self.assertIn(UNIT_ID, [item["unit_id"] for item in state.list_units()])
 
         state.remove_workspace(folder, delete_evidence=False)
@@ -98,10 +106,10 @@ class WorkspaceRemovalTests(unittest.TestCase):
         shutil.rmtree(folder / ".groma")  # the repository is opened again later
         init_workspace(folder, name="revive")
         unitmatch.sync_units()
-        # Pinned as current behaviour, not endorsed: nothing resurrects the Unit
-        # except the card still lying in the folder.
-        self.assertIn(UNIT_ID, [item["unit_id"] for item in state.list_units()])
-        self.assertEqual(load_unit(folder)["unit_id"], UNIT_ID)
+        # 身份卡还在文件夹里，但它只证身份：账里不许复活这条主题。
+        self.assertNotIn(UNIT_ID, [item["unit_id"] for item in state.list_units()])
+        self.assertEqual(load_unit(folder)["unit_id"], UNIT_ID,
+                         "卡不该被废到连工作区身份都不证——身份兜底还在")
 
     def test_removing_the_card_stops_the_revival(self) -> None:
         folder = self._folder_with_card("nocard", UNIT_ID)

@@ -56,10 +56,14 @@ class AboutPageTests(unittest.TestCase):
         self.assertIn("不读取凭据", body)
 
     def test_about_does_not_add_a_seventh_primary_nav_entry(self) -> None:  # A2
-        """关于的入口走页头品牌与页脚，主导航 `<nav>` 仍恰好六项（§0.3 的既有契约）。"""
+        """关于的入口走页头品牌与页脚，主导航 `<nav>` 仍恰好六项（§0.3 的既有契约）。
+
+        导航本版起为七项（+「设置」设置收纳新页）；
+        本条守的是「关于不挤进主导航」，计数守卫随之 6→7。
+        """
         body = self.client.get("/about").get_data(as_text=True)
         first_nav = re.search(r"<nav\b[^>]*>([\s\S]*?)</nav>", body).group(1)
-        self.assertEqual(first_nav.count("<a "), 6, "主导航被加成第七项了")
+        self.assertEqual(first_nav.count("<a "), 7, "主导航计数不对（应为七项）")
         self.assertNotIn("关于</a>", first_nav, "关于不许挤进主导航")
         self.assertIn('<span class="brand"><a href="/about">', body, "页头品牌没链到关于页")
         self.assertIn('<footer>本地运行 · 不上传 · 不写回 Harness ｜ <a href="/about">关于</a>', body)

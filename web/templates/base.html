@@ -43,6 +43,21 @@
                              box-shadow:0 20px 50px rgba(15,23,42,.25); }
   .modal-veil dialog::backdrop { background:transparent; }
   .scope-bar { background:#f0fdfa; border:1px solid #a7f3d0; color:#065f46; border-radius:12px; padding:10px 14px; margin-bottom:16px; font-size:14px; }
+  /* 简报材料块（屏 5 形状：紫左线浅底）；K7 加 .payload 投影盒；K6 加 .pipe 站盒。*/
+  .material { border-left:3px solid #8b5cf6; background:#f5f3ff; border-radius:6px; padding:8px 10px; font-size:13px; word-break:break-all; }
+  /* 三站 .pipe 盒（屏 6 形状：盒+站间箭头+当前站 teal 描边+棒位徽标）与 violet 徽标；K7 加 .payload 投影盒。*/
+  .pipe-row { display:flex; gap:8px; align-items:stretch; flex-wrap:wrap; margin-bottom:10px; }
+  .pipe { flex:1; min-width:150px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff; position:relative; }
+  .pipe.current { border:2px solid var(--teal); }
+  .pipe .who { font-weight:700; font-size:14px; }
+  .pipe .what { margin-top:4px; font-size:13px; color:var(--muted); }
+  .pipe-badge { position:absolute; top:-9px; right:10px; background:var(--teal); color:#fff; border-radius:999px; font-size:11px; font-weight:700; padding:2px 8px; }
+  .pipe-arrow { align-self:center; color:var(--muted); font-size:16px; }
+  .violet { background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe; }
+  /* 按受众预览载荷的并排投影盒（屏 7 形状）。*/
+  .payload-row { display:flex; gap:10px; align-items:stretch; flex-wrap:wrap; margin-top:8px; }
+  .payload { flex:1; min-width:260px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#f8fafc; }
+  .payload .pbody { margin-top:6px; font-size:12px; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,Consolas,monospace; }
   a.primary { display:inline-block; background:var(--teal); color:#fff; border-radius:8px; padding:8px 16px; font-size:14px; text-decoration:none; }
   a.primary:hover { filter:brightness(1.08); }
   .row { display:flex; gap:16px; flex-wrap:wrap; }
@@ -110,6 +125,7 @@
     <a class="{{ 'active' if here == url_for('assets_page') }}" href="{{ url_for('assets_page') }}" title="资产">资产</a>
     <a class="{{ 'active' if here == url_for('units_page') }}" href="{{ url_for('units_page') }}" title="协作主题">协作主题</a>
     <a class="{{ 'active' if here == url_for('observe_page') }}" href="{{ url_for('observe_page') }}" title="观测">观测</a>
+    <a class="{{ 'active' if here == url_for('settings_page') }}" href="{{ url_for('settings_page') }}" title="设置">设置</a>
   </nav>
 </aside>
 <div class="content">
@@ -118,15 +134,15 @@
 </header>
 <main>
   <div class="strip">
-    <span class="chip">工作区 <b>{{ registered|length }}</b> ｜ 协作主题 <b>{{ themes|length }}</b></span>
-    {% if paused %}<span class="chip warn">已暂停</span>{% else %}<span class="chip">采集中</span>{% endif %}
+    {# chip 分三组：库存（家底）/ 运行（此刻）/ 告警（要动手的）——原来的平铺一长串读不出轻重。 #}
+    <span class="chip">库存：工作区 <b>{{ registered|length }}</b> ｜ 协作主题 <b>{{ themes|length }}</b></span>
+    {% if report %}<span class="chip">库存：已采 <b>{{ report.counts.collected }}</b> ｜ 厂商清单 <b>{{ report.counts.vendor_db_sessions }}</b></span>{% endif %}
+    {% if paused %}<span class="chip warn">运行：已暂停</span>{% else %}<span class="chip">运行：采集中</span>{% endif %}
     {% if report %}
-    <span class="chip">已采 <b>{{ report.counts.collected }}</b></span>
-    <span class="chip">厂商清单 <b>{{ report.counts.vendor_db_sessions }}</b></span>
-    <span class="chip">漏采 <b>{{ report.counts.missing_from_collection }}</b></span>
-    <span class="chip warn">未分类 <b>{{ report.coverage.unclassified }}</b></span>
-    {% if report.counts.undeclared_roots %}<span class="chip bad">有根没申报 <b>{{ report.counts.undeclared_roots }}</b></span>{% endif %}
+    <span class="chip warn">告警：漏采 <b>{{ report.counts.missing_from_collection }}</b> ｜ 未分类 <b>{{ report.coverage.unclassified }}</b></span>
+    {% if report.counts.undeclared_roots %}<span class="chip bad">告警：有根没申报 <b>{{ report.counts.undeclared_roots }}</b></span>{% endif %}
     {% endif %}
+    {% if classify_cause %}<span class="chip warn">{{ classify_cause }}</span>{% endif %}
   </div>
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
   {% if notice %}<div class="ok">{{ notice }}</div>{% endif %}

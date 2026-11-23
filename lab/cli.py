@@ -18,7 +18,7 @@ from . import __version__, schedule as schedule_mod
 from . import classify, classify_run, hooks, provider, reconcile, topics
 from . import trigger as trigger_mod
 from . import unitlink, unitmatch
-from .asset import attach_claims, build_asset, list_assets, verify_claims
+from .asset import attach_claims, build_asset, list_assets, migrate_singleton, verify_claims
 from . import inject as inject_mod
 from .inject import export_context, inject_status, inject_unit, refresh as refresh_payload, uninject
 from .agents import sync_agents
@@ -181,11 +181,21 @@ def build_parser() -> argparse.ArgumentParser:
     asset_cmd = sub.add_parser("asset", help="context-asset drafts")
     _add_root(asset_cmd, default=argparse.SUPPRESS)
     asset_sub = asset_cmd.add_subparsers(dest="asset_command", required=True)
-    asset_build = asset_sub.add_parser("build", help="build a draft from selected sessions")
+    asset_build = asset_sub.add_parser("build", help="build/reproduce the single-slot asset from selected sessions")
     _add_root(asset_build, default=argparse.SUPPRESS)
     asset_build.add_argument("--title", required=True)
     asset_build.add_argument("--session", action="append", default=[], metavar="SOURCE:PATH")
     asset_build.add_argument("--note", default="")
+    # 两模式——默认覆写单槽（同指纹提示跳过）、--check 预演不落盘。
+    asset_build.add_argument("--check", action="store_true",
+                             help="dry-run: compute the fingerprint and evidence summary, write nothing")
+    asset_migrate = asset_sub.add_parser(
+        "migrate-singleton",
+        help="fold historical asset-* generations into the single slot, then delete them")
+    _add_root(asset_migrate, default=argparse.SUPPRESS)
+    asset_migrate.add_argument("--unit", required=True, help="topic/unit id whose home holds the assets")
+    asset_migrate.add_argument("--yes", action="store_true",
+                               help="apply the merge and deletions; without it only prints the plan")
     asset_list = asset_sub.add_parser("list", help="list drafts")
     _add_root(asset_list, default=argparse.SUPPRESS)
     asset_export = asset_sub.add_parser("export", help="export a CONTEXT.md")
@@ -753,7 +763,24 @@ def main(argv: list[str] | None = None) -> int:
                     if not source or not path:
                         raise LabError("--session must be source:path, got: %s" % raw)
                     selection.append((source, path))
-                emit(build_asset(root, args.title, selection, args.note))
+                if args.check:
+                    # 预演——算指纹+依据摘要，不落盘。
+                    built = build_asset(root, args.title, selection, args.note, dry_run=True)
+                    emit({"planned": built.get("planned"), "asset_id": built.get("asset_id"),
+                          "title": built.get("title"), "sessions": built.get("sessions"),
+                          "digest": built.get("digest"), "unchanged": built.get("unchanged", False),
+                          "note": "预演：一个字节都没写"})
+                else:
+                    emit(build_asset(root, args.title, selection, args.note))
+            elif args.asset_command == "migrate-singleton":
+                # preferred 从账本来——reforges 最新一笔指向的资产代
+                # （asset.py 不 import topics，参数注入）。
+                from . import topics as topics_mod
+
+                history = topics_mod.reforge_history(args.unit)
+                preferred = (history[-1] or {}).get("asset_id") if history else None
+                emit(migrate_singleton(root, args.unit, apply=args.yes,
+                                       preferred_asset_id=preferred))
             elif args.asset_command == "export":
                 target = Path(args.out) if args.out else None
                 emit(export_context(root, args.asset_id, target))
@@ -807,7 +834,20 @@ def main(argv: list[str] | None = None) -> int:
                 removed = unitmatch.leave(root, args.path, args.unit)
                 emit({"left": removed, "path": str(Path(args.path).expanduser())})
             elif args.unit_command == "rename":
-                emit(unitmatch.rename_unit(load_unit(root)["unit_id"], args.name))
+                # CLI 与 web 两条入口一致——双写 topics 标签（显示名源）+ 登记名；
+                # topics 先行（空名/超长/撞名在这里先挡），登记名跟随失败则回退，不半写。
+                _uid = load_unit(root)["unit_id"]
+                _record = topics.resolve_topic(_uid)
+                _old = (_record or {}).get("name")
+                if _record is not None:
+                    topics.rename_topic(_record["topic_id"], args.name)
+                try:
+                    _renamed = unitmatch.rename_unit(_uid, args.name)
+                except LabError:
+                    if _record is not None:
+                        topics.rename_topic(_record["topic_id"], _old)
+                    raise
+                emit(_renamed)
             elif args.unit_command == "delete":
                 spec = (args.unit or "").strip()
                 match = [item for item in unitmatch.unit_list()
@@ -897,6 +937,14 @@ def main(argv: list[str] | None = None) -> int:
             sync_agents(root)
             started = catchup(root, written_by="cli:web-start")
             _err("groma: startup catchup -> %s\n" % json.dumps(started, ensure_ascii=False))
+            try:
+                # 接力回放只在启动段跑（不在任何 GET 页面路径里）；只入账不投递。
+                from lab.handoff import replay_unit_handoffs
+                replayed = replay_unit_handoffs(root)
+                if replayed.get("created"):
+                    _err("groma: handoff replay -> %s\n" % json.dumps(replayed, ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001 - 回放失败不拦 web 启动
+                _err("groma: handoff replay failed: %s\n" % exc)
             app = create_app(root)
             app.run(host=args.host, port=args.port, debug=False, use_reloader=False)
         elif args.command == "summary":

@@ -71,6 +71,35 @@ def _retire_units(dying: list[dict], refs_by_unit: dict[str, list[str]], when: s
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def retired_unit_ids() -> set[str]:
+    """本机退役账本里的全部 unit_id（删掉的主题不许被卡/注册表行折回来）。
+
+    写入只有 `_retire_units` 一处（remove_workspace 孤儿级联与 `drop_unit` 都走它）；
+    读取这里一处——折叠与登记在落行前都要问一遍这本账。
+    """
+    path = state_root() / RETIRED
+    ids: set[str] = set()
+    if not path.is_file():
+        return ids
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ids.add(json.loads(line)["unit_id"])
+        except (ValueError, KeyError):
+            continue
+    return ids
+
+
+def retire_units(dying: list[dict], when: str) -> None:
+    """把整条 Unit 记进退役账本（`drop_unit` 用的公开入口；孤儿级联走 `_retire_units`）。"""
+    refs_by_unit: dict[str, list[str]] = {}
+    for row in list_memberships():
+        refs_by_unit.setdefault(row["unit_id"], []).append(row["binding_id"])
+    _retire_units(dying, refs_by_unit, when)
+
+
 def case_insensitive_fs() -> bool:
     """Windows and macOS (default volume) fold case; Linux does not."""
     return os.name == "nt" or sys.platform == "darwin"

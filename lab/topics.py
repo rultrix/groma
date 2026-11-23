@@ -154,6 +154,41 @@ def topic_record(topic_id: str) -> dict | None:
     return None
 
 
+# 主题标签长度上限——仓库此前没有统一口径，本次立 120 字（登记名
+# rename_unit 那侧没有上限，双写时以更严的一侧为准）。
+TOPIC_NAME_MAX = 120
+
+
+def rename_topic(topic_id: str, name: str, decided_by: str = "human") -> dict:
+    """改名写显示名源——topics 标签是显示名的唯一来源（M4）。
+
+    原子写 topics.json（`_atomic_write` 现成件，不引入第二写法）；空名拒、超长拒；
+    撞名拒（create_topic 以 name 做对账键，撞了会让两条主题在按名解析时混叠）。
+    只动 topics 标签：登记名的跟随由调用方双写（web units_rename / CLI unit rename）。
+    """
+    label = (name or "").strip()
+    if not label:
+        raise ValueError("主题名称不能为空")
+    if len(label) > TOPIC_NAME_MAX:
+        raise ValueError("主题名称太长（最多 %d 字）" % TOPIC_NAME_MAX)
+    record = resolve_topic(topic_id)
+    if record is None:
+        raise ValueError("主题不存在：%s" % topic_id)
+    payload = _read_json(_topics_path(), {"schema": SCHEMA, "topics": []})
+    updated = None
+    for item in payload["topics"]:
+        if item["topic_id"] != record["topic_id"]:
+            if item.get("name") == label:
+                raise ValueError("已有叫「%s」的主题：换一个名字" % label)
+            continue
+        item["name"] = label
+        item["name_updated_at"] = _now()
+        item["name_by"] = decided_by
+        updated = dict(item)
+    _atomic_write(_topics_path(), payload)
+    return updated or {**record, "name": label}
+
+
 def _atomic_write(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -362,13 +397,35 @@ def last_reforge(topic_id: str) -> dict | None:
     return latest
 
 
+def reforge_history(topic_id: str) -> list[dict]:
+    """某主题的全部重铸账本记录（时序，旧→新）。
+
+    单例化后历史代文件不再承担审计——唯一权威=topic_reforges.jsonl，
+    界面摘要行读这里，不另造第二条实现。
+    """
+    path = _reforges_path()
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("topic_id") == topic_id:
+            out.append(record)
+    return out
+
+
 def reforge(root: str | Path, topic: str, title: str | None = None, note: str = "") -> dict:
     """Rebuild the topic's asset from live evidence, and record what was cited.
 
     引不到的键在选中前就被剔除并计数（`skipped_stale`），计数同时进返回值与账本：
     只进返回值等于事后无法取证。
 
-    `root` 是调用者的立足点，**不再决定资产落在哪**：协作主题的证据跨工作区，
+    `root` 是调用者的立足点**不再决定资产落在哪**：协作主题的证据跨工作区，
     从哪个成员区发起都必须得到同一份资产，所以落点恒为主题的家（`home_path`）。
     """
     from .asset import build_asset
@@ -390,6 +447,13 @@ def reforge(root: str | Path, topic: str, title: str | None = None, note: str = 
     if not home:
         raise ValueError("协作主题「%s」没有本机工作区，重铸无处落盘" % record["name"])
     asset = build_asset(Path(home), label, selection, note)
+    # 指纹相同 → 「没变不重铸」，不写盘、不追加账本（账本只记实质重铸）。
+    if asset.get("unchanged"):
+        return {"topic_id": record["topic_id"], "topic": record["name"],
+                "asset_id": asset["asset_id"], "title": label,
+                "sessions": len(selection), "skipped_stale": skipped_stale,
+                "skipped": skipped, "unchanged": True,
+                "reason": asset.get("reason"), "asset": asset}
     _append_reforge({
         "schema": SCHEMA,
         "topic_id": record["topic_id"],
@@ -398,6 +462,9 @@ def reforge(root: str | Path, topic: str, title: str | None = None, note: str = 
         "sessions": len(selection),
         "skipped_stale": skipped_stale,
         "skipped": skipped,
+        # claims 继承的失效分桶进账本（与 skipped_stale 同款待遇）。
+        "skipped_claims": asset.get("skipped_claims") or {},
+        "inherited_claims": asset.get("inherited_claims") or 0,
         "selection": [[source, path] for source, path in selection],
         "at": _now(),
     })
@@ -467,3 +534,185 @@ def topic_of_asset(asset_id: str) -> str | None:
         if str(record.get("asset_id")) == str(asset_id):
             found = record.get("topic_id")
     return found
+
+
+# --- 注入源的主题级登记（权威）；工作区 manifest 只是指它的投影 ----------------------
+
+INJECTIONS = "topic_injections.jsonl"
+
+
+def _injections_path() -> Path:
+    return state_root() / INJECTIONS
+
+
+def _append_injection(record: dict) -> None:
+    path = _injections_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _latest_injection(topic_id: str) -> dict | None:
+    path = _injections_path()
+    if not path.is_file():
+        return None
+    latest = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("topic_id") == topic_id:
+            latest = record
+    return latest
+
+
+def set_injection_source(topic_id: str, asset_id: str, title: str | None = None,
+                         decided_by: str = "human") -> dict:
+    """Register the asset this topic serves to ALL of its members.
+
+    The ledger here is the authority; each workspace's manifest only mirrors it
+    (with `authority: "topic"`), so the fan-out can be rebuilt from one row.
+    Re-pointing the asset keeps the region pauses -- pausing a region is about
+    that region, not about which asset was current when it was paused.
+    """
+    current = get_injection_source(topic_id) or {}
+    record = {"schema": SCHEMA, "topic_id": topic_id, "asset_id": asset_id,
+              "title": title, "paused": list(current.get("paused") or []),
+              "cleared": False, "decided_by": decided_by, "set_at": _now()}
+    _append_injection(record)
+    return record
+
+
+def get_injection_source(topic_id: str) -> dict | None:
+    record = _latest_injection(topic_id)
+    if record is None or record.get("cleared"):
+        return None
+    return record
+
+
+def clear_injection_source(topic_id: str, decided_by: str = "human") -> None:
+    if get_injection_source(topic_id) is not None:
+        _append_injection({"schema": SCHEMA, "topic_id": topic_id,
+                           "cleared": True, "decided_by": decided_by, "set_at": _now()})
+
+
+def set_region_paused(topic_id: str, path: str, paused: bool,
+                      decided_by: str = "human") -> dict:
+    """Pause (or resume) injection into ONE member region; the other members keep serving."""
+    source = get_injection_source(topic_id) or {"topic_id": topic_id, "asset_id": None,
+                                                "paused": [], "cleared": False}
+    paused_list = [item for item in (source.get("paused") or []) if item != path]
+    if paused:
+        paused_list.append(path)
+    record = {"schema": SCHEMA, "topic_id": topic_id,
+              "asset_id": source.get("asset_id"), "title": source.get("title"),
+              "paused": paused_list, "cleared": False,
+              "decided_by": decided_by, "set_at": _now()}
+    _append_injection(record)
+    return record
+
+
+def set_pipeline_roles(topic_id: str, roles: dict[str, str],
+                       decided_by: str = "human") -> dict:
+    """在主题登记上持久化流水线角色表（harness → 站位）；人工配一次。
+
+    表存进 topics.json 的主题记录（`pipeline.roles`），三站顺序即流水线；
+    非法站位/一站多 harness 拒配。空表（全空选择）= 清表，回到「未配表」。
+    """
+    record = topic_record(topic_id)
+    if record is None:
+        raise ValueError("没有这个主题：%s" % (topic_id or "（空）"))
+    from .pipeline import normalise_roles  # 验证逻辑住在 pipeline，一处判
+
+    cleaned = normalise_roles(roles)
+    payload = _read_json(_topics_path(), {"schema": SCHEMA, "topics": []})
+    for item in payload["topics"]:
+        if item["topic_id"] == topic_id:
+            if cleaned:
+                item["pipeline"] = {"roles": cleaned, "decided_by": decided_by,
+                                    "updated_at": _now()}
+            else:
+                item.pop("pipeline", None)
+            _atomic_write(_topics_path(), payload)
+            return _decorate(item)
+    raise ValueError("没有这个主题：%s" % topic_id)
+
+
+def pipeline_roles(topic_id: str) -> dict | None:
+    """主题的流水线角色表；未配表返回 None（零配置可用，角色接力不启用）。"""
+    record = topic_record(topic_id) or {}
+    pipeline = record.get("pipeline")
+    if not pipeline or not pipeline.get("roles"):
+        return None
+    return pipeline
+
+
+HANDOFFS = "handoffs.jsonl"
+
+
+def _handoffs_path() -> Path:
+    return state_root() / HANDOFFS
+
+
+def record_handoff(entry: dict) -> dict:
+    """接力简报登记：检出即记一笔 pending，一次性、不进 gate 的 stale 判定。"""
+    record = {"schema": SCHEMA, "status": "pending", "recorded_at": _now(), **entry}
+    path = _handoffs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
+def latest_handoff(workspace: str) -> dict | None:
+    """这个工作区最近一笔简报登记；没有账返回 None。"""
+    path = _handoffs_path()
+    if not path.is_file():
+        return None
+    latest = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if item.get("workspace") == workspace:
+            latest = item
+    return latest
+
+
+def mark_handoff_delivered(record: dict, faces: list | None = None,
+                           decided_by: str = "human") -> dict:
+    """简报已投：新记一笔 delivered（jsonl 是追加账，状态流转以最后一笔为准）。"""
+    return record_handoff({**record, "status": "delivered", "faces": faces or [],
+                           "decided_by": decided_by, "at": record.get("at")})
+
+
+def mark_handoff_ignored(record: dict, decided_by: str = "human") -> dict:
+    """「忽略这一次」：这笔不投，也不再检出。"""
+    return record_handoff({**record, "status": "ignored",
+                           "decided_by": decided_by, "at": record.get("at")})
+
+
+def handoff_history(workspace: str | None = None, limit: int = 20) -> list[dict]:
+    """简报历史（界面用）：按登记顺序，新在后；可按工作区过滤。"""
+    path = _handoffs_path()
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if workspace is None or item.get("workspace") == workspace:
+            out.append(item)
+    return out[-limit:]

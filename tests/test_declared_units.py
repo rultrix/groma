@@ -111,11 +111,12 @@ class LedgerOriginTests(unittest.TestCase):
         unitmatch.sync_units()
         self.assertEqual("human", self._row(unit_id).get("origin"))
 
-    def test_a_leftover_card_still_revives_its_unit(self) -> None:
-        """**这条钉的是"没有多挡一道闸门"**：没有主题行的遗留卡，重开目录仍折得回来。
+    def test_a_folded_card_lands_no_unit_row(self) -> None:
+        """退役复活语义（原为「遗留卡重开目录仍折得回来」）。
 
-        挡折会让 `units.json` 更干净，但会把"重开即复活"这条已拍的形状关掉，所以本刀只标来源。
-        谁哪天给折叠加谓词闸门，这条会先红——那时请连复活判据一起重新拍，别让它静默变味。
+        身份卡只证工作区身份——一张**不带注册表指针**的卡
+        （卡在、但 workspaces.json 行上没有 unit_id），sync_units 不许折出协作主题行。
+        钉法：把注册表行上的 unit_id 摘掉再 sync，账里不许凭空多出这条主题。
         """
         home = self._folder("revive-ws")
         init_workspace(home, name="revive-ws", owner="tester")
@@ -123,8 +124,13 @@ class LedgerOriginTests(unittest.TestCase):
         unit_id = unitmatch.folder_unit(home)
         unitmatch.sync_units()
         self._rewrite(state.UNITS, lambda rows: [r for r in rows if r["unit_id"] != unit_id])
+        # 卡还在，但注册表行上的指针摘了：这时卡就是唯一证据，而卡不落行。
+        self._rewrite(state.WORKSPACES, lambda rows: [
+            {k: v for k, v in row.items() if k != "unit_id"} if row.get("name") == "revive-ws" else row
+            for row in rows])
         unitmatch.sync_units()
-        self.assertIn(unit_id, [item["unit_id"] for item in state.list_units()])
+        self.assertNotIn(unit_id, [item["unit_id"] for item in state.list_units()],
+                         "身份卡折出了协作主题行——卡只证身份的口径被破坏")
 
 
 class RetireTests(unittest.TestCase):

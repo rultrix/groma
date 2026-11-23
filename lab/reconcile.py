@@ -350,7 +350,7 @@ def _db_matches(token: str, shape: str, db_ids: list[str]) -> list[str]:
 
 # --- 证据键存活判定------------------------------------------------
 # 这里问的是"这条键还能不能被 `build_asset` 引到"，不是"世界上还有多少会话"：
-# 引用索引就是 digest，用它是为了回答能不能引，**不是**把它当分母（见上「三规则」）。
+# 引用索引就是 digest，用它是为了回答能不能引**不是**把它当分母（见上「三规则」）。
 # 厂商两栏（DB 与 transcript）只在键不可引时回答"为什么"。
 LIVE = "live"
 VENDOR_LISTS = "vendor_lists_not_digested"

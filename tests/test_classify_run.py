@@ -222,7 +222,10 @@ class MaintainTests(RunFixture):
         result = classify_run.maintain(self.root, provider_path=str(stub))
         self.assertEqual(result["steps"][0]["state"], "reforged")
         self.assertEqual(result["steps"][0].get("injected"), [])
-        self.assertTrue(asset.find_asset(self.root, foreign["asset_id"]))
+        # 资产单例化改写，单槽被夜间重铸覆写为自家指纹，
+        # 外来资产不再以独立目录存在；「绝不顶掉」由 build 前的接管判据守住（injected==[]）。
+        self.assertIsNone(asset.find_asset(self.root, foreign["asset_id"]),
+                          "单槽仍是外来指纹——夜间重铸没落盘")
 
     def test_the_nightly_repoint_carries_the_theme_being_reforged(self) -> None:  # A1-6
         """夜间换指向时要把"正在重铸的这个主题"交给注入这一步，不能让它去问落点目录的卡。

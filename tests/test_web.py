@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import statebox  # noqa: F401  -- must land before any lab import touches state
+import json
 import os
 import re
 import shutil
@@ -135,7 +136,9 @@ class WebTests(unittest.TestCase):
         response = self.client.get("/units")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
-        self.assertIn("协作主题是标签，不是视角", body)  # the page lists every theme; it is not a scope switch
+        # 头部句正向化——说「是什么」，不说「不是什么」；
+        # 实现判据仍钉在 ⓘ（「判据：units.json 里标了人建的…」那条 tip 原样保留）。
+        self.assertIn("协作主题是<b>本机协作的记账单位</b>", body)
         self.assertIn("不需要 GitHub", body)  # local-only merge is first-class, no remote needed
         # 改写这一行：原句钉的是「并入工作区在」——发现页改版后**变成谎话**
         # （发现页不再并入主题，挂主题搬到主题页每个 block 下面）。强度不变：仍钉"这页把两轴的去处说清楚"，
@@ -162,7 +165,23 @@ class WebTests(unittest.TestCase):
         self.assertIn("未声明采集根", body)  # honest: joined, but nothing has been collected there yet
         self.assertFalse((sibling / ".groma").exists())  # joining still writes nothing into the folder
         self.assertIn("2 个工作区", self.client.get("/evidence").get_data(as_text=True))
-        self.assertIn("2 个工作区并集", self.client.get("/assets").get_data(as_text=True))
+        # 资产单例化改写（F10 的测试）：手工表单随草稿退役，
+        # 成员集口径只剩页头「N 个工作区」。
+        self.assertIn("2 个工作区", self.client.get("/assets").get_data(as_text=True))
+
+    def test_assets_page_reforge_is_main_path_and_manual_form_is_folded(self) -> None:
+        """资产单例化改写（账本化测试）：重铸=唯一铸造入口
+        （块头实心按钮直连 topics.reforge）；手工表单随草稿一并退役——不再有
+        「高级：从会话手工生成草稿」路径。"""
+        body = self.client.get("/assets").get_data(as_text=True)
+        self.assertIn('class="reforge"', body, "资产页块头没有重铸主按钮")
+        self.assertNotIn("高级：从会话手工生成草稿", body, "手工表单没退役")
+        self.assertNotIn("生成草稿", body, "手工生成动词还在")
+
+    def test_assets_header_uses_the_topics_tag_with_the_key_in_a_tip(self) -> None:
+        """命名统一（M3/M4/Q3）：资产页块头显示名唯一来源=topics 标签，工程键进 ⓘ。"""
+        body = self.client.get("/assets").get_data(as_text=True)
+        self.assertIn('data-tip="工程键 unit_', body, "工程键没有进 ⓘ")
 
     def test_units_page_injection_column_tells_the_truth(self) -> None:
         add_source(self.root, "src", str(self.src), include=["projects"])
@@ -170,8 +189,15 @@ class WebTests(unittest.TestCase):
         self.assertIn("未注入", self.client.get("/units").get_data(as_text=True))
 
         asset = build_asset(self.root, "注入验收", [("src", "projects/s.jsonl")])
+        # 改写，apply 不再读请求 asset_id（注入源 ≡ 服役资产）——
+        # 先经 CLI 权力路径（显式 asset_id 照旧）把资产立成服役资产，再走 web 两步流重新投放。
+        # apply 两步化，直写必须带 confirm=1（不带会落在确认页，不是错误）。
+        from lab.inject import inject_theme
+
+        inject_theme(load_unit(self.root)["unit_id"], asset["asset_id"])
         response = self.client.post(
-            "/unit/inject/apply", data={"asset_id": asset["asset_id"], "path": str(self.root)}
+            "/unit/inject/apply",
+            data={"path": str(self.root), "confirm": "1"},
         )
         self.assertEqual(response.status_code, 303)
         self.assertIn("notice=", response.headers["Location"])
@@ -193,8 +219,14 @@ class WebTests(unittest.TestCase):
         self.client.post("/unit/inject/hook", data={"path": str(self.root), "off": "1"})
         self.assertIn("载荷就绪 · 无装载面", self.client.get("/units").get_data(as_text=True))
         self.assertEqual(self.client.post("/unit/inject/stop", data={"path": str(self.root)}).status_code, 303)
+        # 改写（总书逐刀改写点名）：stop 语义从「整体停发」升为「按区暂停」——
+        # 主题级源不变，这一区载荷摘掉、亮「已停发」并给「恢复投递」；不再回到「未注入」。
+        # 原测试（断言停发后整页回到「未注入」）。
         self.assertFalse(payload.exists())
-        self.assertIn("未注入", self.client.get("/units").get_data(as_text=True))
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("已停发", body)
+        self.assertIn("恢复投递", body)
+        self.assertNotIn("未注入", body)
 
     def test_injection_form_defaults_to_the_home_workspace(self) -> None:
         # 注入源选错目录，等于把整个项目的背景投给一个无关的工作区，所以默认必须是"家"。
@@ -216,7 +248,7 @@ class WebTests(unittest.TestCase):
     def test_discover_lists_known_harnesses(self) -> None:
         """改写（三步留痕见 CHECK）：harness 名仍要出现，但「主题」这个词的载体换了。
 
-        原来靠 candidates 行里的「本主题 X / 共 Y」满足 K10(b)，裁定 6 把那句改成「本区」后
+        原来靠 candidates 行里的「本主题 X / 共 Y」满足 K10(b)，把那句改成「本区」后
         这个载体消失；改由添加卡那句「不挂主题。挂主题在主题页」承担同一件事——
         **断言强度不变**：仍钉"导航写主题，正文就用主题这个词，不写 Unit"。
         """
@@ -271,7 +303,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("活跃天数", response.get_data(as_text=True))
 
     def test_evidence_page_counts_sessions(self) -> None:
-        """K17: 呈现层下线，两条呈现断言按 docs/RULES.md 的登记删掉。
+        """呈现层下线，两条呈现断言按 docs/RULES.md 的登记删掉。
 
         Removed here: `assertIn("<svg", body)` and `assertIn('id="unit"', body)`.
         The count assertion below is byte-for-byte the one that used to point at
@@ -392,14 +424,19 @@ class WebTests(unittest.TestCase):
         add_source(self.root, "src", str(self.src), include=["projects"])
         catchup(self.root, force=True)
         self.assertEqual(self.client.get("/assets").status_code, 200)
+        # 资产单例化改写，/assets/build 路由退役，
+        # 铸造唯一入口=重铸；资产仍进账面。
         response = self.client.post(
             "/assets/build",
             data={"title": "草稿一", "session": ["src:projects/s.jsonl"]},
         )
-        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.status_code, 404, "/assets/build 没退役")
+        from lab.asset import build_asset as _build
+
+        built = _build(self.root, "草稿一", [("src", "projects/s.jsonl")])
         body = self.client.get("/assets").get_data(as_text=True)
         self.assertIn("草稿一", body)
-        self.assertIn("draft", body)
+        self.assertIn("未服役", body)
 
     def test_assets_page_has_no_free_target_selector(self) -> None:  # A1-1
         add_source(self.root, "src", str(self.src), include=["projects"])
@@ -410,6 +447,8 @@ class WebTests(unittest.TestCase):
         self.assertIn(self.root.as_posix(), body)
 
     def test_assets_build_lands_in_the_theme_home_only(self) -> None:  # A1-2
+        """资产单例化改写（A1-2）：/assets/build 路由退役；
+        落点保证由 build_asset 的单槽实现承载——恒 <家>/.groma/assets/current/。"""
         from lab.state import register_workspace
 
         add_source(self.root, "src", str(self.src), include=["projects"])
@@ -420,22 +459,25 @@ class WebTests(unittest.TestCase):
         register_workspace(other)
         response = self.client.post("/assets/build", data={
             "title": "落点归家", "session": ["src:projects/s.jsonl"], "path": str(other)})
-        self.assertEqual(response.status_code, 303)
-        self.assertNotIn("error=", response.headers["Location"])
+        self.assertEqual(response.status_code, 404, "/assets/build 没退役")
         self.assertFalse((other / ".groma" / "assets").exists(), "资产被写进了别的区")
-        self.assertTrue(any((self.root / ".groma" / "assets").glob("asset-*")))
+        from lab.asset import build_asset as _build
+
+        _build(self.root, "落点归家", [("src", "projects/s.jsonl")])
+        # 落点=主题家的单槽 assets/current/。
+        self.assertTrue((self.root / ".groma" / "assets" / "current" / "asset.json").is_file())
 
     def test_a_session_outside_the_theme_is_named_as_such(self) -> None:  # A1-3
         from urllib.parse import unquote
 
         add_source(self.root, "src", str(self.src), include=["projects"])
         catchup(self.root, force=True)
-        response = self.client.post("/assets/build", data={
-            "title": "越界", "session": ["src:projects/missing.jsonl"]})
-        self.assertEqual(response.status_code, 303)
-        location = unquote(response.headers["Location"])
-        self.assertIn("不在这个协作主题", location)
-        self.assertNotIn("Unit", location)
+        # 资产单例化改写，web 表单退役，越界判据归 build_asset 本体。
+        from lab.asset import build_asset as _build
+
+        with self.assertRaises(Exception) as caught:
+            _build(self.root, "越界", [("src", "projects/missing.jsonl")])
+        self.assertIn("not in this Unit", str(caught.exception))
 
     def test_the_fanout_reaches_a_member_that_carries_its_own_card(self) -> None:  # A1-4
         """勾「本协作主题全部工作区」时，自带身份卡的成员区也必须拿到同一份资产。
@@ -456,9 +498,14 @@ class WebTests(unittest.TestCase):
         register_workspace(member)
         unitmatch.join_unit(load_unit(self.root)["unit_id"], member, role="evidence")
         asset = build_asset(self.root, "扇出资产", [("src", "projects/s.jsonl")])
+        # 改写，apply 不再读请求 asset_id——CLI 权力路径先立服役资产。
+        from lab.inject import inject_theme
 
+        inject_theme(load_unit(self.root)["unit_id"], asset["asset_id"])
+
+        # 同上，直写带 confirm=1。
         response = self.client.post(
-            "/unit/inject/apply", data={"asset_id": asset["asset_id"], "all": "1"}
+            "/unit/inject/apply", data={"all": "1", "confirm": "1"}
         )
         location = unquote(response.headers["Location"])
         self.assertNotIn("error=", location, "扇出仍按落点自己的卡片解析资产：%s" % location)
@@ -472,15 +519,28 @@ class WebTests(unittest.TestCase):
         """注入表单自己带上"这一块的主题 id"，不靠当前聚焦、也不靠落点目录的卡片。
 
         回归证伪：只查整页有没有 `name="unit"` 会被重铸表单蒙过去（它是同页的另一张 form），
-        所以这里按表单取段。
+        所以这里按表单取段。注入改两步提交：form 改 GET 去 confirm 页、带 confirm=1 才真写——
+        判据跟着钉新形状（GET form + hidden unit），语义不变。
         """
         topic = self._theme_with_evidence()
-        self.client.post("/assets/build", data={"title": "带主题的注入", "session": ["src:projects/s.jsonl"]})
-        for page in ("/assets", "/units"):
-            body = self.client.get(page).get_data(as_text=True)
-            form = re.search(r'<form method="post" action="/unit/inject/apply"[^>]*>(.*?)</form>', body, re.S)
-            self.assertIsNotNone(form, "%s 页没有注入表单" % page)
-            self.assertIn('name="unit" value="%s"' % topic["topic_id"], form.group(1), page)
+        # 资产单例化改写：/assets/build 退役，资产改由 build_asset 造。
+        from lab.asset import build_asset as _build_a1
+
+        _build_a1(self.root, "带主题的注入", [("src", "projects/s.jsonl")])
+        # 改写，注入源卡退役——hero 行末「重新投放」= 唯一入口，
+        # 链接只带主题参数（确认页固定服役资产，不再有资产选择）。
+        from lab.inject import inject_theme
+        from lab.asset import list_assets
+
+        home = unitmatch.home_path(topic["topic_id"])
+        inject_theme(topic["topic_id"], list_assets(Path(home))[0]["asset_id"])
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn('href="/unit/inject/confirm?unit=%s"' % topic["topic_id"], body,
+                      "hero 行末没有带主题参数的「重新投放」链接")
+        self.assertNotIn("注入到这里", body)
+        self.assertNotIn('name="asset_id"', body, "web 面还留着资产选择")
+        assets_body = self.client.get("/assets").get_data(as_text=True)
+        self.assertNotIn('action="/unit/inject/confirm"', assets_body, "资产页还留着注入入口")
 
     def _dead_registration(self, name: str = "ghost-ws") -> Path:
         """造一条"目录已经没了、登记行还在"的行——真机 web-unit 的形状。"""
@@ -545,6 +605,77 @@ class WebTests(unittest.TestCase):
         self.assertIn("移除工作区", location)
         self.assertTrue((self.root / ".groma").is_dir(), "越界的一步居然动了启动目录")
 
+    def test_assets_h1_drops_the_draft_word_and_history_folds_away(self) -> None:
+        """资产单例化改写：h1「上下文资产」；
+        单例化后一主题恒一份资产，历史折叠区随之退役——账面只列当前槽一份，
+        追溯归 reforges 账本（母本 §13）；「注入到这里」仍退场。"""
+        from lab.asset import build_asset
+
+        from lab import topics as topics_mod
+
+        topics_mod.create_topic("web-unit")
+        add_source(self.root, "src", str(self.src), include=["projects"])
+        catchup(self.root, force=True)
+        build_asset(self.root, "服役资产", [("src", "projects/s.jsonl")])
+        from lab.inject import inject_theme
+
+        inject_theme(self._root_unit_id(), build_asset(
+            self.root, "服役资产", [("src", "projects/s.jsonl")])["asset_id"])
+        body = self.client.get("/assets").get_data(as_text=True)
+        self.assertIn("<h1>上下文资产</h1>", body)
+        self.assertNotIn("<h1>上下文资产草稿</h1>", body)
+        self.assertNotIn("另有", body)
+        self.assertNotIn("注入到这里", body, "资产页还留着注入入口")
+
+    def test_session_page_lists_assistant_blocks_with_anchor_links(self) -> None:
+        """屏4（新增）：session 详情 assistant 块有「落锚」入口，预填参数进资产页落锚表单。"""
+        from urllib.parse import parse_qs, urlparse
+
+        from lab import vault
+        from lab.collect import catchup as _catchup
+        from lab.sources import add_source as _add
+
+        src = self.src
+        _add(self.root, "src", str(src), "qoder-cn", ["projects"])
+        _catchup(self.root, force=True)
+        # 落一个真分片进 vault（fixture 同 test_asset_claims 的合成形状）
+        from lab.asset import build_asset
+
+        build_asset(self.root, "落锚底稿", [("src", "projects/s.jsonl")])
+        # vault 分片只读列出 assistant 块：先建索引（catchup 只写 digest，不写 vault 索引）
+        from lab.vault import reindex as vault_reindex, vault_root as vault_root_of
+
+        vault_reindex(vault_root_of())
+        # vault 里落一个真分片（合成形状，session_key 与 digest 的口径一致），
+        # 否则 session 页的 assistant 块区是空态——落锚入口无处可挂。
+        from lab import vault as vault_mod
+
+        vault_mod.append_records(vault_mod.vault_root(), "qoder-cn", "qoder-cn:s", [
+            {"ts_utc": "2026-11-10T09:01:00Z", "granularity": "event", "session_key": "qoder-cn:s",
+             "role": "assistant", "type": "message", "text": "这是 assistant 块正文，可整块落锚。",
+             "reasoning": None, "tool": None, "strip": [], "agent_id": "agt-1",
+             "source": {"path": "projects/s.jsonl", "line_no": 1, "bytes": 32,
+                        "source_sha256": "0" * 64}},
+        ])
+        from lab.vault import reindex as vault_reindex, vault_root as vault_root_of
+
+        vault_reindex(vault_root_of())
+        page = self.client.get("/session", query_string={"source": "src", "path": "projects/s.jsonl"})
+        self.assertEqual(page.status_code, 200)
+        session_body = page.get_data(as_text=True)
+        self.assertIn("assistant 块", session_body)
+        self.assertIn("assistant 块", session_body, "session 页没有 assistant 块区")
+        anchor_link = re.search(r'/assets\?[^"]*anchor_session=[^"]+', session_body)
+        self.assertIsNotNone(anchor_link, "assistant 块没有落锚入口")
+        query = parse_qs(urlparse(anchor_link.group(0).replace("&amp;", "&")).query)
+        self.assertIn("anchor_session", query)
+        self.assertIn("anchor_from", query)
+        self.assertIn("anchor_quote", query)
+        # 预填参数真的落进资产页表单
+        assets_body = self.client.get(anchor_link.group(0).replace("&amp;", "&")).get_data(as_text=True)
+        self.assertIn("自会话详情预填", assets_body)
+        self.assertIn('name="from_ts" value="%s"' % query["anchor_from"][0], assets_body)
+
     def test_assets_blocks_are_themes_and_each_asset_lists_once(self) -> None:  # A2-1
         from lab import topics as topics_mod
 
@@ -554,7 +685,9 @@ class WebTests(unittest.TestCase):
         asset = build_asset(self.root, "唯一草稿", [("src", "projects/s.jsonl")])
         body = self.client.get("/assets").get_data(as_text=True)
         self.assertEqual(body.count('data-topic="'), len(topics_mod.list_topics()))
-        self.assertEqual(body.count(asset["asset_id"]), 3, "同一份资产在页上不是恰好 3 处")
+        # 资产单例化改写：删除 href 与落锚资产下拉退役，
+        # 同一份资产在页上恰好运 2 处（行内 code、导出 hidden）。
+        self.assertEqual(body.count(asset["asset_id"]), 2, "同一份资产在页上不是恰好 2 处")
 
     def test_block_header_names_the_theme_not_a_workspace_list(self) -> None:  # A2-2
         from lab import topics as topics_mod
@@ -594,9 +727,10 @@ class WebTests(unittest.TestCase):
         build_asset(member, "成员区里的旧草稿", [("src", "projects/s.jsonl")])
         self.client.post("/units/join", data={"unit": topic["topic_id"], "path": str(member)})
         body = self.client.get("/assets").get_data(as_text=True)
-        # list_assets 按 Unit 全扫，两份草稿都会出现；隐藏落点必须都指向家
-        self.assertEqual(body.count('name="path" value="%s"' % self.root.as_posix()), 4,
-                         "导出与注入两条 hidden 不是指向家")
+        # 资产单例化改写：单槽后账面至多一份，
+        # 家的槽里的导出 hidden 指向家；成员区槽里的草稿不被拿它的目录当落点。
+        self.assertEqual(body.count('name="path" value="%s"' % self.root.as_posix()), 1,
+                         "导出 hidden 不是指向家")
         self.assertEqual(body.count('name="path" value="%s"' % member.as_posix()), 0,
                          "成员区的草稿被拿它的目录当成了落点")
 
@@ -624,12 +758,17 @@ class WebTests(unittest.TestCase):
         下发的 CSS 给它一个实心底 —— 只挪位置不给视觉差，人眼仍然找不出它是按钮。
         """
         self._theme_with_evidence()
-        for page in ("/units", "/assets"):
-            body = self.client.get(page).get_data(as_text=True)
-            self.assertIn('<span class="block-actions">', body, page)
-            self.assertIn('<button type="submit" class="reforge">', body, page)
-            self.assertNotIn('class="ghost" style="padding:2px 8px;font-size:12px">重铸', body, page)
-            self.assertRegex(body, r"button\.reforge\s*\{[^}]*background:\s*(?:var\(--teal\)|#(?!fff))")
+        # 改写，units 页重铸按钮挪 hero 下方、文字改「立即重铸」，
+        # block-actions 容器随之只在 /assets 保留（屏 8 形状）；实心底断言两页共用。
+        assets = self.client.get("/assets").get_data(as_text=True)
+        self.assertIn('<span class="block-actions">', assets)
+        self.assertIn('<button type="submit" class="reforge" '
+                      'title="按主题说明重铸——没变不重铸；别人的资产绝不顶掉">重铸</button>', assets)
+        units = self.client.get("/units").get_data(as_text=True)
+        self.assertIn('<button type="submit" class="reforge" '
+                      'title="按主题说明重铸——没变不重铸；别人的资产绝不顶掉">立即重铸</button>', units)
+        self.assertNotIn('class="ghost" style="padding:2px 8px;font-size:12px">重铸', assets)
+        self.assertRegex(assets, r"button\.reforge\s*\{[^}]*background:\s*(?:var\(--teal\)|#(?!fff))")
 
     def test_reforge_from_the_page_writes_ledger_and_asset(self) -> None:  # A3-2
         from lab import topics as topics_mod
@@ -737,7 +876,7 @@ class WebTests(unittest.TestCase):
         topic = topics.create_topic(unit["name"])
         self.assertEqual(topic["topic_id"], unit["unit_id"])
 
-    # --- 刀 1 · 数字说真话（K3 / K4 / K1 / K23）--------------------------------------
+    # --- 数字说真话（K3 / K4 / K1 / K23）--------------------------------------
 
     def _fake_vault(self, index: dict) -> Path:
         """Point GROMA_VAULT_DIR at a temp root holding only an index.json.
@@ -884,7 +1023,8 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("2026-11-09T00:00:00Z", line)
         # 实测：这同一个 instant 在概览出现在**两处**（「上次写入」与那一行主题的「采集」列），
         # 按"每个实例都要查"的规矩逐处钉——两处都必须是本机串，且裸 UTC 在整个响应里 0 命中。
-        self.assertEqual(body.count("2026-11-09 08:00:00 +08:00"), 2)
+        # 链路健康句也渲染同一条「上次写入」时刻，2→3 处。
+        self.assertEqual(body.count("2026-11-09 08:00:00 +08:00"), 3)
         self.assertEqual(body.count("2026-11-09T00:00:00Z"), 0)
 
     def _two_units_one_theme(self) -> dict:
@@ -1127,7 +1267,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(body[at + len(marker):at + len(marker) + 10], "2026-11-09")
         self.assertNotIn(marker + "2026-11-08", body)
 
-    # --- 刀 2 · 成功要有反馈（K6）--------------------------------------------------
+    # --- 成功要有反馈（K6）--------------------------------------------------
 
     def test_each_action_announces_its_result(self) -> None:
         """Every success path says what it did; only errors used to speak up.
@@ -1147,9 +1287,8 @@ class WebTests(unittest.TestCase):
                                                         "include": "projects", "harness": "test"})
         self.assertNotIn("error=", setup.headers["Location"])  # precondition, not the finding
 
+        # 资产单例化改写，/assets/build 退役，从动作清单摘除。
         actions = [
-            ("/assets/build", {"title": "草稿一", "session": ["src:projects/s.jsonl"],
-                               "path": str(self.root)}),
             ("/settings", {"interval": "7"}),
             ("/refresh", {}),
             ("/pause", {}),
@@ -1165,7 +1304,7 @@ class WebTests(unittest.TestCase):
                 self.assertNotIn("error=", response.headers["Location"])
                 self.assertIn("notice=", response.headers["Location"])
 
-    # --- 刀 3 · 发现页读写同源（K9′）------------------------------------------------
+    # --- 发现页读写同源（K9′）------------------------------------------------
 
     def _second_workspace(self) -> Path:
         from lab.workspace import init_workspace
@@ -1223,7 +1362,7 @@ class WebTests(unittest.TestCase):
         self.assertIn('name="ws" value="%s"' % other.as_posix(), body)
         self.assertIn("申报到：<b>%s</b>" % other.name, body)
 
-    # --- 刀 4 · 默认值与术语（K7 / K8 / K20 / K10(b)）-------------------------------
+    # --- 默认值与术语（K7 / K8 / K20 / K10(b)）-------------------------------
 
     def test_discover_defaults_to_the_workspace_in_use_not_the_first_row(self) -> None:
         """`registered_paths()[0]` is whichever folder the registry happens to lead with.
@@ -1261,7 +1400,7 @@ class WebTests(unittest.TestCase):
     def test_the_theme_page_says_theme_not_unit(self) -> None:
         """K10 (b): the navigation says 主题, so the body text must not say Unit.
 
-        这条其实打在发现页上（名字是历史）。裁定 6 把发现页唯一的「本主题」换成
+        这条其实打在发现页上（名字是历史）。把发现页唯一的「本主题」换成
         「本区」后，载体改由添加卡那句「不挂主题。挂主题在主题页」承担——**强度不变**：
         仍是"正文用主题这个词、不写 Unit"。主题页那半边由主题页自己的测试覆盖。
         """
@@ -1278,7 +1417,7 @@ class WebTests(unittest.TestCase):
         assets = self.client.get("/assets").get_data(as_text=True)
         self.assertNotIn("本 Unit", assets)
 
-    # --- 刀 5 · 破坏性确认两步化（K11）----------------------------------------------
+    # --- 破坏性确认两步化（K11）----------------------------------------------
 
     def test_destructive_actions_need_two_submissions(self) -> None:
         """What this knife adds is the confirm page, not the server gate.
@@ -1328,7 +1467,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("不会删除任何会话文件", remove_body)
         self.assertIn("nope", remove_body)
 
-    # --- 刀 6 · 观测页不再嵌套整份文档（K5）------------------------------------------
+    # --- 观测页不再嵌套整份文档（K5）------------------------------------------
 
     def test_observe_artifact_is_served_as_a_standalone_document(self) -> None:
         """A whole document inside a card leaked the artifact's CSS into the shell.
@@ -1353,7 +1492,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("#123456", page)
         self.assertIn("打开观测页", page)
 
-    # --- 刀 7 · 拆关系图页（K17）-----------------------------------------------------
+    # --- 拆关系图页（K17）-----------------------------------------------------
 
     def test_evidence_page_lists_active_evidence_and_links_to_sessions(self) -> None:
         """主题页那一行「N 条证据」点进来，条数必须等于 active 证据数。"""
@@ -1391,15 +1530,18 @@ class WebTests(unittest.TestCase):
         self.assertIn("分母不来自我们自己的产出", body)
 
     def test_the_navigation_has_six_entries(self) -> None:
-        """7 → 6：关系图这一页下线，证据与缺口挂回原来的入口。"""
+        """7 → 6：关系图这一页下线，证据与缺口挂回原来的入口。
+
+        导航加第 7 项「设置」（设置收纳新页），计数守卫 6→7。
+        """
         nav = first_nav_block(self.client.get("/").get_data(as_text=True))
         self.assertNotIn("/graph", nav)
-        self.assertEqual(nav.count("<a "), 6)
+        self.assertEqual(nav.count("<a "), 7)
 
     def test_rail_is_the_first_nav_container(self) -> None:
         """外壳搬进左栏后，页面里**第一个** `<nav>` 仍必须是那 6 项导航，工作区块住在 `<aside>`。
 
-        这条是刀 S1 的 A 类缺陷钉（未修版上红在 `assertIn("<aside", body)`——今天根本没有 aside）。
+        这条是缺陷回归钉（未修版上红在 `assertIn("<aside", body)`——今天根本没有 aside）。
         为什么盯"第一个 nav + aside 存在"这一对：既有契约 `test_the_navigation_has_six_entries`
         是按第一个 nav 块数 `<a `=6 的（取法见 `first_nav_block`）。左栏要新增工作区列表，
         **一旦把它也塞进 `<nav>`，那条红线就变成 6+N**——红的是排版选择，不是它守的东西。
@@ -1407,7 +1549,8 @@ class WebTests(unittest.TestCase):
         """
         body = self.client.get("/").get_data(as_text=True)
         nav = first_nav_block(body)
-        self.assertEqual(nav.count("<a "), 6)
+        # nav 7 项（+「设置」）。
+        self.assertEqual(nav.count("<a "), 7)
         self.assertIn("<aside", body)
 
     def test_shell_keeps_six_entry_labels(self) -> None:
@@ -1499,7 +1642,7 @@ class WebTests(unittest.TestCase):
         """W20（A 类，改写自 W16 的同名判据）：不带 `ws` 时 select 仍渲染、选中回落项。
 
         `discover_target` 有回落（无 `ws` 时选 current()）；注册表为空时整卡（切换 + 采集面）
-        都不渲染——没有可切对象时渲染空控件没有动作价值（裁定 5）。
+        都不渲染——没有可切对象时渲染空控件没有动作价值。
         """
         import re
 
@@ -1617,7 +1760,7 @@ class WebTests(unittest.TestCase):
     def test_every_declare_form_carries_the_displayed_workspace(self) -> None:
         """页面上**每一个** POST 到 /discover/add 的表单都要自带 hidden `ws`。
 
-        这条不是额外收紧，是补 K9′ 的漏，取证时刻见刀 S2 提交信息：既有红线
+        这条不是额外收紧，是补 K9′ 的漏，取证时刻见提交信息：既有红线
         `test_discover_form_says_which_workspace_it_writes_to` 是整页
         `assertIn('name="ws" value="B"')`，而页面上有**两处**申报表单——
         第②步表格里的「申报这个根」没有 hidden `ws`、底部 candidates 那个有 ⇒
@@ -1671,7 +1814,7 @@ class WebTests(unittest.TestCase):
     def test_observe_artifact_response_carries_a_self_labelled_return_bar(self) -> None:
         """产物经 Groma 供给时顶回一条**自标身份**的返回条，且磁盘那份一个字节不少（A 类）。
 
-        自标身份是设计侧复核裁定 4：注入条必须可被机器判定（`<meta name="groma-observe-return-bar">`），
+        自标身份是设计侧复核：注入条必须可被机器判定（`<meta name="groma-observe-return-bar">`），
         否则下一个读产物的人会拿"响应 == 磁盘文件"当不变量——而它现在不成立了。
         "磁盘文件不含标记"这半边同样重要：注入只许发生在供给层，产物仍是可独立存在的快照。
         """
@@ -1750,13 +1893,13 @@ class WebTests(unittest.TestCase):
             self.assertIn(key, graph)
         self.assertEqual(graph["session_count"], 1)
 
-    # --- 刀 8 · 花额度的自动化上界面（K2）--------------------------------------------
+    # --- 花额度的自动化上界面（K2）--------------------------------------------
 
     def test_settings_stores_boolean_switches_without_a_code_change(self) -> None:
         """设计要求的先证：`lab/settings.py` 本轮真的不用动。
 
         这条在未改任何代码时就该绿（CLASSIFY_DEFAULTS 已含两个 bool，
-        save_settings 对 bool 走 _as_bool）。它绿了，刀 8 才只剩界面半边。
+        save_settings 对 bool 走 _as_bool）。它绿了，才只剩界面半边。
         """
         from lab.settings import save_settings
 
@@ -1766,16 +1909,140 @@ class WebTests(unittest.TestCase):
         self.assertIs(load_settings(self.root)["auto_inject"], True)
 
     def test_overview_offers_the_two_spend_switches(self) -> None:
-        """花额度的自动化：默认开，但必须能关、且看得见（项目所有者 定的底线）。"""
-        body = self.client.get("/").get_data(as_text=True)
+        """花额度的自动化：默认开，但必须能关、且看得见（项目所有者 定的底线）。
+
+        开关表单随设置收纳整体搬去 /settings；
+        本条断言对象不变，改取设置页；概览不再含任何设置输入框（新测试另钉）。
+        """
+        body = self.client.get("/settings").get_data(as_text=True)
         self.assertIn('name="auto_form" value="1"', body)
         self.assertIn('name="auto_reforge" value="on" checked', body)
         self.assertIn('name="auto_inject" value="on" checked', body)
         self.assertIn("一次归类会顺带花额度", body)
 
+    def _serving_fixture(self) -> None:
+        """夹具：让主题真有一份服役资产（hero/投放状态列的取数源）。"""
+        from lab.asset import build_asset
+        from lab.collect import catchup
+        from lab.inject import inject_theme
+        from lab.sources import add_source
+
+        add_source(self.root, "src", str(self.src), "qoder-cn", ["projects"])
+        catchup(self.root, force=True)
+        asset = build_asset(self.root, "英雄条试跑", [("src", "projects/s.jsonl")])
+        inject_theme(self._root_unit_id(), asset["asset_id"])
+        # 成员行（移出协作主题的出处）+ 注册过 hook 的区（摘除 hook 的出处）
+        member = Path(self._tmp.name) / "u2-member"
+        member.mkdir()
+        init_workspace(member, name="u2-member", owner="tester")
+        self.client.post("/units/join", data={"unit": self._root_unit_id(), "path": str(member)})
+        self.client.post("/unit/inject/hook", data={"path": str(self.root), "confirm": "1"})
+        inject_theme(self._root_unit_id(), asset["asset_id"])
+
+    def test_theme_hero_bar_names_the_serving_asset_and_delivery(self) -> None:
+        """M3（新增）：主题卡 hero 条——当前生效资产名/asset_id/会话数/重铸时刻/注入比/送达对账/载荷原文链接。"""
+        self._serving_fixture()
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("当前生效：", body)
+        self.assertIn("英雄条试跑", body)
+        self.assertIn("重铸）", body, "hero 条没有重铸时刻")
+        self.assertIn("送达对账", body)
+        self.assertIn("查看载荷原文", body)
+
+    def test_workspace_table_is_flat_with_delivery_badges_and_actions(self) -> None:
+        """预览对齐改写：工作区表 4 列（屏 8 形状）；
+        「暂停此区/恢复投递」升一级，「更多 ▾」收 摘除 hook/设为家/移出协作主题/从本机移除，
+        行内无直接移出/摘除。POST 路由零新增零改名。"""
+        self._serving_fixture()
+        body = self.client.get("/units").get_data(as_text=True)
+        plane = outside_details_blocks(body)
+        # 平铺：4 列表头 + 一级动作在可见面
+        for head in ("成员工作区", "装载面", "投递状态", "投放"):
+            self.assertIn(head, plane)
+        self.assertIn("刷新载荷", plane)
+        self.assertIn("暂停此区", plane)
+        # 「更多 ▾」是 details 的 summary——helper 把整个 details 算折叠面，但它视觉上是可见的入口；
+        # 钉在响应体上（动作本体「摘除 hook」等在 details 里，由下面断言钉）。
+        self.assertIn("更多 ▾", body)
+        # 更多内含低频/不可逆动作（确认页路由不变）
+        more = body.split("更多 ▾", 1)[1]
+        self.assertIn("摘除 hook", more)
+        self.assertIn("设为家", more)
+        self.assertIn("移出协作主题", more)
+        self.assertIn("从本机移除", more)
+        # 行内不再直接出现移出/摘除（只在「更多」里）
+        before_more = body.split("更多 ▾", 1)[0]
+        self.assertNotIn("摘除 hook", before_more)
+        self.assertNotIn("移出协作主题", before_more)
+
+    def test_overview_chain_health_sentence_names_the_serving_asset_and_delivery(self) -> None:
+        """M5（新增）：概览通栏一句话叙述闭环——采集/证据/服役资产名/注入比/送达字样。
+
+        无服役资产时显示「未设注入源」，不装作健康也不报错。
+        """
+        from lab.asset import build_asset
+        from lab.collect import catchup
+        from lab.inject import inject_theme
+        from lab.sources import add_source
+
+        add_source(self.root, "src", str(self.src), "qoder-cn", ["projects"])
+        catchup(self.root, force=True)
+        from lab import topics as topics_mod
+
+        asset = build_asset(self.root, "链路健康试跑", [("src", "projects/s.jsonl")])
+        inject_theme(self._root_unit_id(), asset["asset_id"])
+        body = self.client.get("/").get_data(as_text=True)
+        self.assertIn("链路健康：", body)
+        self.assertIn("链路健康试跑", body, "链路健康句没有点名服役资产")
+        self.assertIn("送达", body, "送达对账字样没有上链路健康句")
+        self.assertIn("注入 1/1 个工作区", body)
+
+        # 无服役资产的空态：另建一个没有注入源的主题不可行（fixture 单主题），
+        # 直接撤掉源（uninject）后句子退到「未设注入源」。
+        from lab.inject import uninject
+        uninject(self.root)
+        body = self.client.get("/").get_data(as_text=True)
+        self.assertIn("未设注入源", body)
+
+    def test_settings_page_hosts_the_moved_forms_and_index_has_none(self) -> None:
+        """设置收纳（新增）：GET /settings 200 且含间隔表单；概览不含任何设置输入框。"""
+        response = self.client.get("/settings")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn('name="interval"', body)
+        self.assertIn("归类用的模型", body)
+        index = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn('name="interval"', index, "间隔输入框还留在概览")
+        self.assertNotIn('name="classify_model"', index)
+        self.assertIn("设置页", index, "概览状态卡没有指去设置页")
+
+    def test_overview_theme_rows_drop_the_unit_key_to_a_tip(self) -> None:
+        """新增：概览主题表行撤 unit_ 码（ⓘ 里保留）。"""
+        from lab import topics as topics_mod
+
+        topics_mod.create_topic("web-unit")
+        body = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn("<code>unit_", body, "unit_ 码还在可见面")
+        self.assertIn("工程键 unit_", body, "工程键不在 ⓘ 里了——撤出可见面不等于删数据")
+
+    def test_nav_carries_the_settings_entry(self) -> None:
+        """新增：nav 含「设置」项（观测之后）。"""
+        nav = first_nav_block(self.client.get("/").get_data(as_text=True))
+        self.assertIn(">设置</a>", nav)
+        self.assertLess(nav.index(">观测</a>"), nav.index(">设置</a>"), "设置应在观测之后")
+
+    def _root_unit_id(self) -> str:
+        # 夹具辅助：主题级注入按注册表 id 寻家（同 test_t1_quick_wins 的修正）。
+        from lab import unitmatch as um
+
+        if not hasattr(self, "_cached_root_unit_id"):
+            self._cached_root_unit_id = um.create_unit("web-unit", self.root)["unit_id"]
+        return self._cached_root_unit_id
+
     def test_unchecked_box_turns_the_switch_off_for_real(self) -> None:
         """复选框不勾选时表单根本不发这个键；哨兵规则是唯一能把"关"说清楚的写法。"""
-        body = self.client.get("/").get_data(as_text=True)
+        # 表单在 /settings 页（端点不变）。
+        body = self.client.get("/settings").get_data(as_text=True)
         self.assertIn('name="auto_form" value="1"', body)
 
         off = self.client.post("/settings", data={"auto_form": "1", "auto_inject": "on"})
@@ -1804,7 +2071,7 @@ class WebTests(unittest.TestCase):
     # --- 主题页列表化 ------------------------------
 
     def test_the_theme_summary_is_visible_without_expanding(self) -> None:
-        """摘要行留在可见面、管理动作收进 `<details>`（A 类，裁定 7）。
+        """摘要行留在可见面、管理动作收进 `<details>`（A 类）。
 
         判据必须是 outside_details（本轮 §3 新规矩）：折叠后 assertIn 全绿，
         测不出"用户要展开才看得见"。所以这里同时用正反两面——摘要在外面，改名/表格在里面。
@@ -1818,7 +2085,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("移出协作主题", plane)
 
     def test_the_chain_status_stays_outside_details(self) -> None:
-        """两句状态/警告不许折（B 类加强；红线 5 + 裁定 8）。
+        """两句状态/警告不许折（B 类加强；红线 5）。
 
         今天在 /units 上 `<details>` 只有 others 的 id 详情，所以这条改前改后都应绿；
         它的牙齿靠回归证伪：把状态行整段包进 `<details>` ⇒ 必红。
@@ -1833,15 +2100,15 @@ class WebTests(unittest.TestCase):
         self.assertIn("没有说明时自动归类会退化。", plane)
 
     def test_the_delete_theme_link_is_inside_details(self) -> None:
-        """「删除这个主题」收进详情（A 类，裁定 8——与机会点 3 的红色分级无关）。"""
+        """「删除这个主题」收进详情（A 类——与机会点 3 的红色分级无关）。"""
         body = self.client.get("/units").get_data(as_text=True)
         self.assertIn("删除这个协作主题", body)
         self.assertNotIn("删除这个协作主题", outside_details_blocks(body))
 
     def test_theme_details_are_collapsed_by_default(self) -> None:
-        """每个 block 的详情默认不展开（A 类，裁定 7）：有 `<details>`、没有一个带 `open`。
+        """每个 block 的详情默认不展开（A 类）：有 `<details>`、没有一个带 `open`。
 
-        同时钉 summary 自述（裁定 9）：折叠的代价是"看不见里面有什么"，summary 是唯一补偿位。
+        同时钉 summary 自述：折叠的代价是"看不见里面有什么"，summary 是唯一补偿位。
         """
         import re
 
@@ -1850,7 +2117,10 @@ class WebTests(unittest.TestCase):
         self.assertGreaterEqual(len(tags), 1, "主题页没有任何 <details>——折叠没做")
         for tag in tags:
             self.assertNotIn(" open", tag, "有 details 默认展开：%s" % tag)
-        self.assertIn("<summary class=\"muted\" style=\"cursor:pointer\">展开管理（改名 · 说明 · 工作区 · 注入）</summary>", body)
+        # 工作区表平铺上浮，管理区瘦身为「家 · 改名 · 说明 · 角色表 · 注入源 · 可并入」；
+        # 再瘦一级——角色表卡整体上移进「接力」卡，摘要随之去掉「角色表」；
+        # ② 注入源卡退役，摘要再去「注入源」。
+        self.assertIn("<summary class=\"muted\" style=\"cursor:pointer\">展开管理（家 · 改名 · 说明 · 可并入）</summary>", body)
 
     def test_outside_details_blocks_strips_nested_blocks(self) -> None:
         """M1（2026-11-16 验收，A 类）：嵌套 `<details>` 下"可见面"不许漏出折叠内容。
@@ -1881,22 +2151,35 @@ class WebTests(unittest.TestCase):
         plane = outside_details_blocks(body)
         self.assertIn("web-unit", plane)
         self.assertIn("0 个工作区", plane)
+        # 工作区表平铺上浮后，空表提示随表进了可见面。
         self.assertIn("这个协作主题还没有本机工作区。", body)
-        self.assertNotIn("这个协作主题还没有本机工作区。", plane)
+        self.assertIn("这个协作主题还没有本机工作区。", plane)
 
     def test_the_first_manual_injection_is_announced_where_it_is_needed(self) -> None:
-        """两条护栏写在注入表单旁边，不是写在文档里。"""
+        """两条护栏写在注入表单旁边，不是写在文档里。
+
+        注入唯一入口收口到主题页；
+        再改写（注入源 ≡ 服役资产）：hero 行末「重新投放」= 唯一手工动作，
+        「注入到这里」select 卡退役；两条护栏句仍留在资产页可见面。
+        """
         add_source(self.root, "src", str(self.src), include=["projects"])
         catchup(self.root, force=True)
-        build_asset(self.root, "护栏验收", [("src", "projects/s.jsonl")])
+        asset = build_asset(self.root, "护栏验收", [("src", "projects/s.jsonl")])
+        from lab.inject import inject_theme
+
+        inject_theme(load_unit(self.root)["unit_id"], asset["asset_id"])
         body = self.client.get("/assets").get_data(as_text=True)
-        self.assertIn("注入到这里", body)
-        self.assertIn("第一次要手动点一次", body)
+        # 资产单例化改写，首句改新话，两条护栏原句不动。
+        self.assertIn("注入跟随机器设置自动走", body)
+        self.assertIn("唯一手工动作=重新投放", body)
         self.assertIn("没变不重铸", body)
         self.assertIn("绝不顶掉", body)
+        units_body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("重新投放", units_body)
+        self.assertNotIn("注入到这里", units_body)
 
     # --- K12 重建按钮的进行中反馈 ------------------------------------------------------
-    #
+
     # 两条都先 self._fake_vault(...)：tests/statebox.py 不重定向 GROMA_VAULT_DIR，
     # 而 lab/vault.py 的 default_root() 不住在 state_root() 下面——不带假 vault
     # 就直接读写开发者机器上那份 1.8 GB 真 vault（验收侧实测 49.8 秒并真改过）。
@@ -2031,7 +2314,7 @@ class WebTests(unittest.TestCase):
     # --- 提示文字瘦身 --------------------------------------------------
 
     def test_tooltip_is_hidden_by_display_not_by_opacity(self) -> None:
-        """ⓘ 浮窗的隐藏态必须是 `display:none`，不许退回 `opacity:0`（真机复量查出来的回归，**B 类**）。
+        """ⓘ 浮窗的隐藏态必须是 `display:none`，不许退回 `opacity:0`（真机复量查出来的回归**B 类**）。
 
         为什么源码级断言而不是渲染断言：`git archive` 树上跑不了布局，而这条钉的恰好是布局事实——
         绝对定位的 `::after` 即使完全透明**仍参与可滚动区域**。曾用 `opacity:0` 藏着它，
@@ -2089,8 +2372,8 @@ class WebTests(unittest.TestCase):
                 "都在既有设计里，不是新规矩",             # AS2：对我们的设计过程说话，不对用户说话
             ],
             "/units": [
-                "只是导出件",                            # U1：实现细节 → 去处是 ARCHITECTURE §2.1 存储表
-                "实测同一批候选",                        # U4：设计期论据 → Jinja 注释
+                "只是导出件",                            # 实现细节 → 去处是 ARCHITECTURE §2.1 存储表
+                "实测同一批候选",                        # 设计期论据 → Jinja 注释
             ],
             "/evidence": [
                 "谁和谁有关系",                          # E1：对着已下线的关系图辩护 → 去处 ARCHITECTURE §4.2.2
@@ -2141,8 +2424,9 @@ class WebTests(unittest.TestCase):
         回归证伪 = 把资产页护栏整段包进 `<details>` → 必须红。
         """
         visible = {
-            "/": ["开着时，一次归类会顺带花额度重铸资产并投放到工作区",          # I8 保留的警告句
-                  "会涨到 GB 级", "建议改到别的盘"],                            # 首启卡第 1 步那句（红线 6）
+            # 「开着时…花额度…」那句随设置表单搬去了 /settings（在 settings 的可见面判据里钉）。
+            "/": ["会涨到 GB 级", "建议改到别的盘"],                            # 首启卡第 1 步那句（红线 6）
+            "/settings": ["开着时，一次归类会顺带花额度重铸资产并投放到工作区"],  # I8 保留的警告句（随表单搬家）
             # 主题页的退化警告也进这张表（只增不减）。"未传导（自动重铸已关）"
             # 在默认夹具下不渲染（自动是开的），它由 test_the_chain_status_stays_outside_details 单独验。
             "/units": ["没有说明时自动归类会退化。"],
@@ -2156,7 +2440,7 @@ class WebTests(unittest.TestCase):
         catchup(self.root, force=True)
         build_asset(self.root, "护栏验收", [("src", "projects/s.jsonl")])
         plane = outside_details_blocks(self.client.get("/assets").get_data(as_text=True))
-        for phrase in ("第一次要手动点一次", "没变不重铸", "绝不顶掉"):
+        for phrase in ("唯一手工动作=重新投放", "没变不重铸", "绝不顶掉"):  # 首句改新话，
             self.assertIn(phrase, plane, "资产页护栏被折进 details 了：%s" % phrase)
 
     # --- 首启两步卡 --------------------------------------------------------------
@@ -2182,13 +2466,13 @@ class WebTests(unittest.TestCase):
         self.assertIn("先定第 1 步", body)
 
     def test_first_run_card_is_only_on_the_overview(self) -> None:
-        """提示式 = 只在概览挂一张（裁定 5）：其余四页连卡片容器都不许出现（A 类）。"""
+        """提示式 = 只在概览挂一张：其余四页连卡片容器都不许出现（A 类）。"""
         for page in ("/discover", "/units", "/observe", "/activity"):
             body = self.client.get(page).get_data(as_text=True)
             self.assertNotIn(self.FIRSTRUN_CARD, body, "%s 上多了首启卡" % page)
 
     def test_confirming_the_default_vault_path_does_not_move_anything(self) -> None:
-        """同一个按钮的"相等"走法：只写标记，不碰 vault 配置、不改根（裁定 3，A 类）。"""
+        """同一个按钮的"相等"走法：只写标记，不碰 vault 配置、不改根（A 类）。"""
         from lab import vault as vault_mod
         from lab.state import first_run
 
@@ -2204,7 +2488,7 @@ class WebTests(unittest.TestCase):
         self.assertNotRegex(body, self.FIELDSET_LOCKED)  # 但门禁开了
 
     def test_asking_for_a_different_vault_path_goes_through_the_confirm_page(self) -> None:
-        """"不等"走法：只做转交（303 到既有确认页），**搬不搬由那一步说了算**（红线 4，A 类）。"""
+        """"不等"走法：只做转交（303 到既有确认页）**搬不搬由那一步说了算**（红线 4，A 类）。"""
         from urllib.parse import unquote
 
         from lab import vault as vault_mod
@@ -2220,7 +2504,7 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(first_run()["vault_confirmed_at"], "只是转交，还没人同意过")
 
     def test_moving_the_vault_marks_the_first_run_confirmed(self) -> None:
-        """走完既有两步链 ⇒ `/vault/move` 成功那一支顺带写标记（裁定 3 后半，A 类）。
+        """走完既有两步链 ⇒ `/vault/move` 成功那一支顺带写标记（后半，A 类）。
 
         `move_vault` 本身由 vault 那轮的测试管；这里钉的是**回执与标记的接线**，
         所以打桩给出 `moved: True` 的回执，判据是"路由有没有照回执落戳"。
@@ -2236,7 +2520,7 @@ class WebTests(unittest.TestCase):
         self.assertIsNotNone(first_run()["vault_confirmed_at"])
 
     def test_both_steps_settled_hides_the_card(self) -> None:
-        """两步都定完 ⇒ 卡整张消失；**只定第 2 步不算完**（裁定 5 的与关系，A 类）。"""
+        """两步都定完 ⇒ 卡整张消失；**只定第 2 步不算完**（的与关系，A 类）。"""
         from lab import vault as vault_mod
         from lab.state import first_run
 
@@ -2250,7 +2534,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(self.FIRSTRUN_CARD, self.client.get("/").get_data(as_text=True))
 
     def test_an_already_set_vault_root_never_shows_step_one(self) -> None:
-        """老用户不被打扰：`set_at` 存在就是"有人显式设过路径"⇒ 第 1 步不再出现（裁定 4，**B 类**）。
+        """老用户不被打扰：`set_at` 存在就是"有人显式设过路径"⇒ 第 1 步不再出现（**B 类**）。
 
         回归证伪 = 把 `vault_ok` 里 `or ... get("set_at")` 那半段删掉
         ⇒ 这台已经设过根的机器重新看见第 1 步 ⇒ 必须红。
@@ -2275,7 +2559,7 @@ class WebTests(unittest.TestCase):
     # --- 发现页 IA：切换器 → 采集面 → 清单 -------------------------------------------
 
     def test_the_discover_page_has_exactly_four_levels(self) -> None:
-        """四段固定顺序：添加工作区 < 当前查看（切换卡）< 采集面 < 我的工作区（A 类，W20 裁定 1）。
+        """四段固定顺序：添加工作区 < 当前查看（切换卡）< 采集面 < 我的工作区（A 类，W20 ）。
 
         前身是 W16 的 `test_the_discover_page_has_exactly_three_levels`；W20 把「切换」从
         采集面卡里抽成独立一级、并把清单置底，所以级数 +1。「添加在最前」这个关系不变。
@@ -2288,7 +2572,7 @@ class WebTests(unittest.TestCase):
         self.assertLess(body.index("这个区的采集面"), body.index("我的工作区"))
 
     def test_the_workspace_list_sits_after_the_detail(self) -> None:
-        """清单置底，且 5 列/移除在第一格/「0 条的原因」在最后一列都不变（A 类，W20 裁定 1/6）。"""
+        """清单置底，且 5 列/移除在第一格/「0 条的原因」在最后一列都不变（A 类，W20 /6）。"""
         self._second_workspace()
         body = self.client.get("/discover").get_data(as_text=True)
         self.assertLess(body.index("这个区的采集面"), body.index("我的工作区"),
@@ -2303,7 +2587,7 @@ class WebTests(unittest.TestCase):
             self.assertNotIn("/workspaces/remove?path=", cells[-1], "移除入口跑到最后一列了")
 
     def test_the_switch_card_sits_between_add_and_detail(self) -> None:
-        """切换卡在添加与采集面之间（A 类，W20 裁定 1）。
+        """切换卡在添加与采集面之间（A 类，W20 ）。
 
         与四段顺序那条同源，但单独留一条：回归证伪"把切换卡搬回采集面之后"要能精确点名。
         """
@@ -2312,7 +2596,7 @@ class WebTests(unittest.TestCase):
         self.assertLess(body.index('class="scope-bar"'), body.index("这个区的采集面"))
 
     def test_the_harness_card_is_not_a_separate_card(self) -> None:
-        """「本机装着的 Harness」降级为采集面卡里的**信息块**，不再有第二个申报入口（A 类，裁定 3）。
+        """「本机装着的 Harness」降级为采集面卡里的**信息块**，不再有第二个申报入口（A 类）。
 
         今天是两张卡、两个按钮做同一件事（root_rows 的「申报这个根」与 candidates 的「加入」）；
         合并后只留 root_rows 那一个入口，candidates 只说"装了什么、这区采了多少"。
@@ -2345,7 +2629,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("申报这个根", body)
 
     def test_the_discover_page_says_this_scope_not_this_theme(self) -> None:
-        """计数口径写「本区 X / 共 Y」不写「本主题」（A 类，裁定 6 / audit-1）。
+        """计数口径写「本区 X / 共 Y」不写「本主题」（A 类，/ audit-1）。
 
         这一页按工作区不按主题（页面自己那句「作用域只在这一页生效」就这么写），
         「本主题」是唯一自相矛盾的一处。打桩 candidates 是为了不依赖这台机器装了什么。
@@ -2360,7 +2644,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("本协作主题", body)
 
     def test_the_workspace_name_is_a_visible_link(self) -> None:
-        """工作区名要有肉眼可见的可点提示（A 类，裁定 5）：下划线 + 「查看 ›」后缀。
+        """工作区名要有肉眼可见的可点提示（A 类）：下划线 + 「查看 ›」后缀。
 
         audit-4 的抱怨是"选中的唯一入口是列表里一个裸链接"——名字看起来像纯文本。
         """
@@ -2435,7 +2719,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(len(unitmatch.unit_list()), before, "重启顺手造了主题")
 
     def test_discover_no_longer_offers_joining_a_theme(self) -> None:
-        """发现页不再有挂主题的口子（A 类，钉裁定 4 的"整块撤走"）：路由字面与标题各 0 命中。"""
+        """发现页不再有挂主题的口子（A 类，钉的"整块撤走"）：路由字面与标题各 0 命中。"""
         body = self.client.get("/discover").get_data(as_text=True)
         self.assertNotIn("并进一个协作主题", body)  # W21b 改名后，防的是新词写回来
         self.assertNotIn("/units/join", body)
@@ -2459,7 +2743,7 @@ class WebTests(unittest.TestCase):
     def test_every_registered_workspace_row_offers_removal(self) -> None:
         """第①步**每一行**都要有移除入口，按行数数（A 类；入口以前只在主题页）。
 
-        钉的是裁定 3 的后果面：只登记未挂主题的工作区在概览/主题页都隐形，
+        钉的是的后果面：只登记未挂主题的工作区在概览/主题页都隐形，
         所以发现页必须能把它移除——否则它会变成"加得进来、去不掉"的死账。
         """
         other = self._second_workspace()
@@ -2508,7 +2792,7 @@ class WebTests(unittest.TestCase):
 
 
     def test_a_second_registered_workspace_settles_step_two(self) -> None:
-        """注册表里有一条 ≠ 启动目录的记录 ⇒ 第 2 步判过 ⇒ 整张卡退（裁定 4，**B 类**）。
+        """注册表里有一条 ≠ 启动目录的记录 ⇒ 第 2 步判过 ⇒ 整张卡退（**B 类**）。
 
         回归证伪 = 把 `workspace_ok` 里 `any(... != boot_root)` 那半段删掉 ⇒ 必红。
         """
@@ -2527,14 +2811,16 @@ class WebTests(unittest.TestCase):
     def _theme_cards(self, body: str) -> dict[str, str]:
         """主题页每个主题一张 card，按**block 头那行**的短码把每张 card 单独切出来。
 
-        切点用 `<div class="muted"><code>unit_xxx</code>`（card 头的短码），**不是**裸 `<code>`：
+        切点用 `<div class="muted"><code>unit_xxx</code>`（card 头的短码）**不是**裸 `<code>`：
         W9 之后别的主题的 others 表里也会渲染同一个短码（在 `<details>` 内），
         按裸短码 `find` 会切进上一张 card。逐实例切是这条刀的核心判据（R15 的反面）。
+        （Q3）把工程键收进 ⓘ 之后，抬头不再有短码行——切点跟着搬到 ⓘ 的
+        data-tip（"工程键 unit_xxx"），逐实例切法不变，短码仍在响应体里。
         """
         starts = [match.start() for match in re.finditer(r'<div class="card">', body)]
         cards = {}
         for unit_id in [item["unit_id"] for item in unitmatch.unit_list()]:
-            at = body.find('<div class="muted"><code>%s</code>' % unit_id)
+            at = body.find('data-tip="工程键 %s' % unit_id)
             self.assertNotEqual(at, -1, "主题页没有这个主题的 card：%s" % unit_id)
             begin = max(start for start in starts if start < at)
             after = [start for start in starts if start > at]
@@ -2592,10 +2878,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("web-unit", others)                       # 主题名进主视图（K10(b)）
         self.assertIn("<details>", others)                     # 短码只在详情里
         self.assertNotIn('<td class="muted">unit_', others)    # 旧形状：主视图直接铺 id
-        self.assertNotIn("<select", others)                    # 裁定 4②：block 就是主题，不要下拉
+        self.assertNotIn("<select", others)                    # block 就是主题，不要下拉
 
     def test_joining_from_the_theme_page_does_not_inject(self) -> None:
-        """从主题页加入只记关系，**不自动投放资产**。
+        """从主题页加入只记关系**不自动投放资产**。
 
         两件事都要钉：只断"没注入"会因为"根本没加入"而假绿，所以同时验关系确实记上了。
         """
@@ -2610,7 +2896,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(outsider.as_posix(), unitmatch.workspaces_for_unit(boot_unit),
                       "关系没记上——那「没注入」是假绿")
         self.assertEqual(surface.read_manifest(outsider)["surfaces"], [],
-                         "加入主题顺手把资产投到了装载面（裁定 5 说不）")
+                         "加入主题顺手把资产投到了装载面（说不）")
 
     def test_a_theme_without_outsiders_renders_no_join_block(self) -> None:
         """本机只有一个区且它就是主题的家 ⇒ 整块不渲染。
@@ -2622,7 +2908,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(body.count("加入这个协作主题"), 0)
 
     def test_the_theme_page_points_at_the_discover_page_without_a_scope(self) -> None:
-        """指路句要说清"登记在发现页、挂主题在本页"，且链接是裸 /discover（红线 3，**B 类**）。
+        """指路句要说清"登记在发现页、挂主题在本页"，且链接是裸 /discover（红线 3**B 类**）。
 
         改掉的是"并入工作区在发现页"那句——发现页不做这件事了，
         留着就是一句会说谎的导航。回归证伪 = 链接带上 `?ws=` ⇒ 本条红。
@@ -2635,15 +2921,17 @@ class WebTests(unittest.TestCase):
 
     # --- 移除工作区＝一次删干净 Groma 的关联 -------------------------
 
-    def _inject_a_block(self, root: Path) -> str:
+    def _inject_a_block(self, root: Path, unit_id: str | None = None) -> str:
         """给这个区写一个 Groma 标记块 + 载荷 + manifest（F6 三件套的真实形状）。
 
-        不走 `inject_unit()`：那要先把资产建出来，与本刀的判据无关。
+        不走 `inject_unit()`：那要先把资产建出来，与这条判据无关。
         这里写的就是 `uninject()` 要删的那三样东西——块、载荷、manifest 条目。
+        修正 fixture：真实链路（inject_theme）写行盖的是**主题** unit_id，
+        成员区自带卡时卡的 id 不是主题 id——所以允许显式指定盖哪个 id。
         """
         from lab import surface
 
-        unit_id = load_unit(root)["unit_id"]
+        unit_id = unit_id or load_unit(root)["unit_id"]
         surface.write_payload(root, "Groma 注入的载荷：本主题的会话摘要")
         record = surface.apply_block(root, "AGENTS.md", unit_id, "asset-test", "后台摘要正文")
         surface.write_manifest(root, {"schema": 1, "surfaces": [{
@@ -2655,7 +2943,7 @@ class WebTests(unittest.TestCase):
     def test_removing_a_workspace_takes_the_injected_blocks_out(self) -> None:
         """A 类（F6）：关系一断，载荷就走——块面、载荷、manifest 三件都要没。
 
-        今天 `remove_workspace()` 只动注册表/成员/主题，**一个注入痕迹都不碰**，
+        今天 `remove_workspace()` 只动注册表/成员/主题**一个注入痕迹都不碰**，
         所以这条在未修版上必红。
         """
         from lab import surface
@@ -2710,7 +2998,7 @@ class WebTests(unittest.TestCase):
         self.assertFalse(rows[0].get("unit_id"), "重新添加后注册表行还指着旧主题")
 
     def test_removing_a_workspace_retires_its_orphan_theme_and_says_so(self) -> None:
-        """A 类：只剩它一个工作区的主题会退役，**notice 要说出主题名**，`retired-units.jsonl` 多一行。"""
+        """A 类：只剩它一个工作区的主题会退役**notice 要说出主题名**，`retired-units.jsonl` 多一行。"""
         from lab import state as state_mod
 
         gone = Path(self._tmp.name) / "theme-home"
@@ -2733,7 +3021,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(after, before + 1, "retired-units.jsonl 没记这一笔")
 
     def test_the_boot_root_cannot_be_removed(self) -> None:
-        """A 类（裁定 8①）：Groma 自己的启动目录不能被这一页移除（它是 Groma 的家，不是普通工作区）。"""
+        """A 类（①）：Groma 自己的启动目录不能被这一页移除（它是 Groma 的家，不是普通工作区）。"""
         self._second_workspace()  # 让"最后一个工作区"那道护栏不抢答
         card = self.root / "groma-unit.json"
         response = self.client.post("/workspaces/remove", data={"path": str(self.root), "confirm": "1"})
@@ -2752,8 +3040,12 @@ class WebTests(unittest.TestCase):
         被文件名 `wb-unit.json` 里的子串满足，主题名那一格其实**从来没被渲染过**。所以现在
         ① 登记 b 之后重开一次 app——`sync_units()` 只在启动跑（`web/app.py:290`），不重开就不会把
         b 的卡折进 `units.json`，退役预览永远是空态（本文件 `:1886`/`:2160` 同一手法）；
-        ② 断言对象从"整页裸串"换成**「会被退役的协作主题」那一格**，并钉成 `<strong>b-unit</strong>`
+        ② 断言对象从"整页裸串"换成**「会被退役的协作主题」那一格**，并钉成 `<strong>…</strong>`
         这种只有列表分支才有的形状 ⇒ 路径文本冒充不了它。
+
+        退役复活语义，原断言钉卡名 `<strong>b-unit</strong>`——
+        起 sync 折行不再抄卡上的名字（卡只证身份），折出的行用注册表行名 `b`，
+        所以这里钉 `<strong>b</strong>`。
         """
         other = self._second_workspace()
         self.client.post("/workspaces/add", data={"path": str(other)})
@@ -2763,16 +3055,16 @@ class WebTests(unittest.TestCase):
         self.assertIn("AGENTS.md", body, "没列注入块所在的文件")
         self.assertIn("groma-unit.json", body, "没列身份卡（它可能被版本库跟踪）")
         orphan_cell = body.split("会被退役的协作主题", 1)[1].split("</tr>", 1)[0]
-        self.assertIn("<strong>b-unit</strong>", orphan_cell,
-                      "主题名那一格没列出 b-unit（拿整页裸串冒充是假绿，见 docstring）")
+        self.assertIn("<strong>b</strong>", orphan_cell,
+                      "主题名那一格没列出 b（拿整页裸串冒充是假绿，见 docstring；折行不抄卡名）")
         self.assertNotIn("没有——这些协作主题还有别的工作区", orphan_cell,
                          "退役那一格走了空态，说明预览根本没认出这个主题")
         self.assertNotIn("groma-unit.json", orphan_cell,
                          "身份卡路径串进了主题格——这一格只许列主题名")
         self.assertIn("不可恢复", body)
         self.assertIn("scans", body)
-        self.assertIn('class="modal-veil"', body, "弹层壳没了（裁定 2）")
-        self.assertIn("<dialog open", body, "弹层不是 <dialog open>（裁定 2）")
+        self.assertIn('class="modal-veil"', body, "弹层壳没了")
+        self.assertIn("<dialog open", body, "弹层不是 <dialog open>")
 
     def test_remove_needs_the_confirm_flag(self) -> None:
         """**A 类**（红线 2）：不带 `confirm=1` 的 POST 不动任何数据。
@@ -2805,9 +3097,9 @@ class WebTests(unittest.TestCase):
         return other, unit_id
 
     def test_leaving_the_last_theme_takes_the_payload_out(self) -> None:
-        """A 类（裁定 6 的另一半）：最后一个主题也移出了 ⇒ 载荷没有来源，必须摘掉。
+        """A 类（的另一半）：最后一个主题也移出了 ⇒ 载荷没有来源，必须摘掉。
 
-        今天的 `/units/leave` 只删一行成员记录，**一个注入痕迹都不碰** ⇒ 未修版必红。
+        今天的 `/units/leave` 只删一行成员记录**一个注入痕迹都不碰** ⇒ 未修版必红。
         """
         from lab import surface
 
@@ -2821,7 +3113,7 @@ class WebTests(unittest.TestCase):
         self.assertFalse(surface.payload_path(other).is_file(), "载荷文件还在")
 
     def test_leaving_one_of_two_themes_keeps_the_payload(self) -> None:
-        """A 类（裁定 6 的"不误伤"半边）：还在另一个主题里 ⇒ **不许摘**，notice 要说清。
+        """A 类（的"不误伤"半边）：还在另一个主题里 ⇒ **不许摘**，notice 要说清。
 
         回归证伪 = 把摘注入提到"还剩几个"判断之外无条件调 ⇒ 本条红。
         """
@@ -2847,7 +3139,7 @@ class WebTests(unittest.TestCase):
         self.assertTrue(surface.payload_path(other).is_file())
 
     def test_leaving_without_membership_still_changes_nothing(self) -> None:
-        """**B 类**：本就未并入 ⇒ 只回一句"本就未并入"，**注入痕迹一动不动**。
+        """**B 类**：本就未并入 ⇒ 只回一句"本就未并入"**注入痕迹一动不动**。
 
         回归证伪：把 `uninject` 提到 `removed` 判断之外无条件调 ⇒ 本条红。
         """
@@ -2907,8 +3199,8 @@ class WebTests(unittest.TestCase):
         second.mkdir()
         init_workspace(second, name="member-unit", owner="tester")
         self.client.post("/units/join", data={"unit": unit_id, "path": str(second)})
-        self._inject_a_block(home)
-        self._inject_a_block(second)
+        self._inject_a_block(home, unit_id)
+        self._inject_a_block(second, unit_id)
 
         self.client.post("/units/delete", data={"unit": unit_id, "confirm": "1"})
         for path in (home, second):
@@ -2916,7 +3208,7 @@ class WebTests(unittest.TestCase):
             self.assertFalse(surface.payload_path(path).is_file(), "%s 的载荷还在" % path.name)
 
     def test_a_deleted_theme_does_not_come_back_after_a_restart(self) -> None:
-        """A 类（钉 F1，本刀核心）：删完**重新 `create_app`** ⇒ 旧主题不回来。
+        """A 类（钉 F1，本次核心）：删完**重新 `create_app`** ⇒ 旧主题不回来。
 
         两件事都要钉：**卡删了** 且 **注册表行不带 unit_id 了**——
         `sync_units()` 的取值正是 `link.get("unit_id") or record.get("unit_id")`，只断一件会留复活路径。
@@ -2952,7 +3244,7 @@ class WebTests(unittest.TestCase):
             self.assertFalse(rows[0].get("org_path"), "%s 的行还留着旧组织路径" % path.name)
 
     def test_the_boot_root_theme_cannot_be_deleted(self) -> None:
-        """A 类（裁定 8①）：启动目录的主题删了下次启动会以新身份回来 ⇒ 拒绝。"""
+        """A 类（①）：启动目录的主题删了下次启动会以新身份回来 ⇒ 拒绝。"""
         from lab import state as state_mod
 
         self._theme_with_home()  # 让"最后一个主题"那道护栏不抢答
@@ -2991,7 +3283,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("/units/delete/confirm?unit=%s" % unit_id, body)
 
     def test_the_last_theme_cannot_be_deleted(self) -> None:
-        """A 类（裁定 8②）：最后一个主题不能删。
+        """A 类：最后一个主题不能删。
 
         ⚠ **走内核、不走路由**：web 路径上启动目录那道护栏总是先命中（本机只有主题时，
         那一个主题就是启动目录的主题），所以"最后一个"这道护栏在路由上被遮蔽——
@@ -3022,7 +3314,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("error=", renamed.headers["Location"], "active 还指着已删的主题")
 
     def test_the_delete_confirm_page_lists_what_stays(self) -> None:
-        """A 类（裁定 2 的界面面）：确认页要说清"工作区与项目文件都留下"，并列出会被摘的东西。"""
+        """A 类（的界面面）：确认页要说清"工作区与项目文件都留下"，并列出会被摘的东西。"""
         home, unit_id = self._theme_with_home()
         self._inject_a_block(home)
         page = self.client.get("/units/delete/confirm", query_string={"unit": unit_id})
@@ -3048,7 +3340,7 @@ class WebTests(unittest.TestCase):
         """一台装着 codex、但这个区没申报它的根。
 
         键名照 `lab/discovery.py` 的 `discover()` 实际返回挑（`name` / `harness` / `root` /
-        `include` / `exists` / `declared`），**不打桩就会去扫真盘的 `~/.codex`**——
+        `include` / `exists` / `declared`）**不打桩就会去扫真盘的 `~/.codex`**——
         测试跟着开发者机器变，正是本仓最忌的那类"今天绿明天红"。
         """
         return [{"name": name, "harness": name, "root": "C:/stub/%s" % name,
@@ -3109,7 +3401,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("3", cell)
 
     def test_the_fourth_reason_is_not_computed_for_unselected_rows(self) -> None:
-        """第四支**只对选中行给**（裁定 10）：非选中行不许为它多扫一次盘。
+        """第四支**只对选中行给**：非选中行不许为它多扫一次盘。
 
         回归证伪：把模板里 `if row.selected` 那半段去掉 ⇒ 非选中行也会拿到打桩的未申报根 ⇒ 本条必须红。
         为了让这一手真的能红，非选中行也写成 `collected == 0`（否则它压根进不了那一支的判据）。
@@ -3163,10 +3455,10 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("max-width:1020px", css)
         rule = re.search(r"\bmain\s*\{([^}]*)\}", css)
         self.assertIsNotNone(rule, "壳 CSS 里找不到 main 规则——这条测试的取法就失效了")
-        self.assertIn("padding:0 24px", rule.group(1), "padding 被改了：那不是本刀要做的事")
+        self.assertIn("padding:0 24px", rule.group(1), "padding 被改了：那不是这次要做的事")
 
     def test_the_rail_breakpoint_is_still_702(self) -> None:
-        """断点仍 702、rail 仍 128/36——本刀**不动断点**，所以这条是不变量（B 类）。
+        """断点仍 702、rail 仍 128/36——**不动断点**，所以这条是不变量（B 类）。
 
         为什么特意钉它：设计只在"量到成因 (c)（rail 自己）"那一支才允许动断点，
         而实测成因是 (a) ⇒ 断点一个数都不该改。这条钉的是"没人顺手把 702 挪了"。
@@ -3176,7 +3468,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(
             len(re.findall(r"@media\s*\(\s*max-width\s*:\s*702px\s*\)", css)),
             1,
-            "外壳断点 702 不止一处或已消失（本刀没授权动断点）",
+            "外壳断点 702 不止一处或已消失（没授权动断点）",
         )
         self.assertRegex(css, r"\.rail\s*\{[^}]*flex:\s*0 0 128px", "rail 满宽不再是 128")
         media = css.split("max-width:702px", 1)[1]
@@ -3252,8 +3544,8 @@ class WebTests(unittest.TestCase):
         """A 类（W21a-1）：新建卡在主题卡之前——先建，再在列表里管。"""
         body = self.client.get("/units").get_data(as_text=True)
         self.assertIn("新建一个协作主题", body)
-        self.assertIn("展开管理（改名", body)
-        self.assertLess(body.index("新建一个协作主题"), body.index("展开管理（改名"))
+        self.assertIn("展开管理（家", body)
+        self.assertLess(body.index("新建一个协作主题"), body.index("展开管理（家"))
 
     def test_the_create_form_uses_a_registered_workspace_select(self) -> None:
         """A 类（W21a-2）：家从自由文本换成「已登记且存在」的下拉，option 按实例数。"""
@@ -3328,7 +3620,7 @@ class WebTests(unittest.TestCase):
         body = self.client.get("/units").get_data(as_text=True)
         self.assertIn("本机设置（不属于任何协作主题）", body)
         label = body.index("本机设置（不属于任何协作主题）")
-        self.assertLess(body.rindex("展开管理（改名"), label)
+        self.assertLess(body.rindex("展开管理（"), label)
         self.assertLess(label, body.index("Vault 上下文保险库"))
 
     def test_the_page_does_not_add_a_workspace_pool_outside_themes(self) -> None:
@@ -3376,7 +3668,7 @@ class WebTests(unittest.TestCase):
     def test_body_links_use_the_teal_token(self) -> None:
         """A 类（W22b）：正文链接统一走 teal token，visited/hover/focus-visible 都有定义。
 
-        只钉 `main` 作用域——rail/header 的链接态不在本刀范围；`a.primary` / `a.danger` 排除在外。
+        只钉 `main` 作用域——rail/header 的链接态不在此范围；`a.primary` / `a.danger` 排除在外。
         """
         css = self.client.get("/").get_data(as_text=True)
         base = re.search(r"main a:not\(\.primary\):not\(\.danger\)\s*\{([^}]*)\}", css)
@@ -3415,6 +3707,1571 @@ class WebTests(unittest.TestCase):
         self.assertIn(hint, outside_details_blocks(body), "说明被折进详情，新建前看不见")
         self.assertLess(body.index("新建一个协作主题"), body.index(hint))
         self.assertLess(body.index("依附工作区"), body.index(hint))
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class RelayCardTests(unittest.TestCase):
+    """接力卡（屏 5+6）：棒位状态条三态、时刻区三态、预览折面（现算零写入）、
+    历史「历史棒」标注；角色表卡升一级出管理区（POST /units/pipeline 路由不动）。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-relay-card-")
+        self.addCleanup(self._tmp.cleanup)
+        self.ws = Path(self._tmp.name) / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="接力卡工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(Path(self._tmp.name) / "startup"),
+            "GROMA_STATE_DIR": str(Path(self._tmp.name) / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        unitmatch.create_unit("接力卡主题", self.ws)
+        from lab import topics as topics_mod
+        topics_mod.create_topic("接力卡主题")
+
+    def _write_digest(self, entries: list[dict]) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "digest-20261122T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _entry(self, harness: str, ts: str) -> dict:
+        return {"source": harness, "path": "sessions/%s-%s.jsonl" % (harness, ts),
+                "events": 3, "created_at": ts, "last_ts": ts}
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def _units(self, client):
+        return client.get("/units").get_data(as_text=True)
+
+    def test_pending_moment_state_shows_decide_buttons(self) -> None:
+        """预览对齐，时刻卡=「检测到换 harness」句式+触发判据行；
+        主按钮「按最近 5 会话铸简报」，直投「现在投」从时刻卡退场；忽略 ghost 保留。"""
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("qoder", "2026-11-22T02:00:00Z")])
+        body = self._units(self._client())
+        self.assertIn("检测到换 harness", body)
+        self.assertIn("触发判据：digest 中同工作区出现新 harness 的首个会话", body)
+        self.assertIn("按最近 5 会话铸简报", body)
+        self.assertIn("忽略这一次", body)
+        self.assertIn("/units/handoff/ignore", body)
+        self.assertNotIn("现在投", body, "直投还挂在时刻卡上——投递只留预览页")
+        self.assertIn("2026-11-22T02:00:00Z", body, "时刻卡的 at 不该缺席")
+
+    def test_observed_state_labels_history_baton(self) -> None:
+        """时刻区第二态：无 pending 有 observed → 最近历史棒，标注「历史棒 · 自动入账不投」。"""
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("qoder", "2026-11-22T02:00:00Z"),
+                            self._entry("codex", "2026-11-22T03:00:00Z")])
+        from lab import handoff
+
+        handoff.replay_handoffs(self.ws)
+        body = self._units(self._client())
+        self.assertNotIn("接力时刻：", body, "observed 不该被当成待办")
+        self.assertIn("历史棒 · 自动入账不投", body)
+        self.assertIn("codex → qoder", body)
+
+    def test_empty_state_says_no_baton_change_yet(self) -> None:
+        """时刻区第三态：无换棒史 → 「还没发生过换棒——最近 N 场都是同一 harness」。"""
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("codex", "2026-11-22T02:00:00Z")])
+        body = self._units(self._client())
+        self.assertIn("还没发生过换棒", body)
+        self.assertIn("最近 2 场都是同一 harness", body)
+
+    def test_baton_bar_three_states(self) -> None:
+        """棒位状态条三态：未配表引导 / mapped 下一棒 / 推不出诚实账。"""
+        client = self._client()
+        body = self._units(client)
+        self.assertIn("接力：未启用——三站流水线（任务书→施工→验收）", body)
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("qoder", "2026-11-22T02:00:00Z")])
+        body = self._units(client)  # 未配表仍引导（配表前不启用）
+        self.assertIn("接力：未启用", body)
+        client.post("/units/pipeline", data={"unit": self._unit_id(), "role_codex": "任务书",
+                                             "role_qoder": "施工"})
+        body = self._units(client)
+        self.assertIn("下一棒", body)
+        self.assertIn("验收", body, "codex=任务书、qoder=施工 ⇒ 下一棒应是验收")
+        # mapped=False 诚实账：最近 harness 换成没配的
+        self._write_digest([self._entry("qoder", "2026-11-22T02:00:00Z"),
+                            self._entry("claude-code", "2026-11-22T03:00:00Z")])
+        body = self._units(client)
+        self.assertIn("棒位推不出", body)
+        self.assertIn("不在表里（诚实账，不猜）", body)
+
+    def _unit_id(self) -> str:
+        from lab import unitmatch
+
+        return unitmatch.folder_unit(self.ws)
+
+    def test_preview_fold_is_computed_now_and_zero_write(self) -> None:
+        """预览折面=「按当前窗口现算」；GET 零写入。
+        预览对齐，折面正文由 render_brief 纯文本改为结构化 payload 卡
+        （四段 <b> 标签形状，与 handoff.html 同一宏）。"""
+        from lab import surface
+
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("qoder", "2026-11-22T02:00:00Z")])
+        surface.write_payload(self.ws, "资产载荷正文")
+        before = surface.payload_path(self.ws).read_bytes()
+        body = self._units(self._client())
+        self.assertIn("预览简报", body)
+        self.assertIn("按当前窗口现算", body)
+        self.assertIn("<b>进行到哪：</b>", body)
+        self.assertIn("<b>交接材料：</b>", body)
+        self.assertEqual(surface.payload_path(self.ws).read_bytes(), before, "GET 预览写了载荷")
+        self.assertFalse((self.ws / "AGENTS.md").exists(), "GET 预览写了块面")
+
+    def test_history_fold_labels_observed_rows(self) -> None:
+        """简报历史折面上移到接力卡；observed 条目标注「历史棒」。"""
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z"),
+                            self._entry("qoder", "2026-11-22T02:00:00Z")])
+        from lab import handoff, topics
+
+        handoff.replay_handoffs(self.ws)
+        body = self._units(self._client())
+        self.assertIn("简报历史（1 笔）", body)
+        self.assertIn("历史棒 · 自动入账不投", body)
+
+    def test_role_table_is_promoted_out_of_management(self) -> None:
+        """改写：角色表卡在接力卡一级，不再住在管理区 details 里。
+        标题行补副句，接力卡锚改到副句后。"""
+        self._write_digest([self._entry("codex", "2026-11-22T01:00:00Z")])
+        body = self._units(self._client())
+        relay = body.split("同一套铸造与投放设施", 1)[1]
+        self.assertIn("流水线角色表", relay, "角色表卡没升进接力卡")
+        self.assertIn('action="/units/pipeline"', relay, "POST /units/pipeline 路由被动了")
+        management = body.split("展开管理（家 · 改名 · 说明 · 可并入）", 1)[1]
+        self.assertNotIn("流水线角色表", management, "角色表还留在管理区里")
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class CopyTests(unittest.TestCase):
+    """投影句两态、assets「N 份资产」。口径测试另在 test_inject_ratio.py。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u5-copy-")
+        self.addCleanup(self._tmp.cleanup)
+        self.ws = Path(self._tmp.name) / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="口径工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(Path(self._tmp.name) / "startup"),
+            "GROMA_STATE_DIR": str(Path(self._tmp.name) / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("口径主题", self.ws)["unit_id"]
+        topics_mod.create_topic("口径主题")
+
+    def _write_digest(self) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/a.jsonl", "events": 3,
+                    "created_at": "2026-11-22T01:00:00Z", "last_ts": "2026-11-22T01:00:00Z"}]
+        (folder / "digest-20261122T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": 1,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def test_evidence_projection_line_without_table(self) -> None:
+        """未配表态：诚实说「未配角色表——载荷全文同投」。"""
+        from web.app import create_app
+
+        client = create_app(self.ws).test_client()
+        body = client.get("/evidence", query_string={"unit": self.unit_id}).get_data(as_text=True)
+        self.assertIn("未配角色表——载荷全文同投", body)
+
+    def test_evidence_projection_line_with_table(self) -> None:
+        """配表态：一行说清按受众投影 + 未列出的 harness 收全文。"""
+        self._write_digest()
+        from web.app import create_app
+
+        client = create_app(self.ws).test_client()
+        client.post("/units/pipeline", data={"unit": self.unit_id,
+                                             "role_codex": "任务书", "role_qoder": "施工"})
+        body = client.get("/evidence", query_string={"unit": self.unit_id}).get_data(as_text=True)
+        self.assertIn("本载荷按受众投影：", body)
+        self.assertIn("codex=任务书视角", body)
+        self.assertIn("未列出的 harness 收全文", body)
+
+    def test_assets_block_header_counts_assets_not_drafts(self) -> None:
+        """资产单例化改写：块头「N 份资产」，
+        「草稿」从计数退场；单例化后两次构建同指纹=没变不重铸，恒 1 份资产
+        （「删除草稿」动词已退役，本项仍保留）。"""
+        self._write_digest()
+        first = build_asset(self.ws, "资产甲", [("codex", "sessions/a.jsonl")])
+        again = build_asset(self.ws, "资产甲", [("codex", "sessions/a.jsonl")])
+        self.assertTrue(again.get("unchanged"), "同指纹没提示没变不重铸")
+        self.assertEqual(first["asset_id"], again["asset_id"])
+        from web.app import create_app
+
+        client = create_app(self.ws).test_client()
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertIn("1 份资产", body)
+        self.assertNotIn("1 份草稿", body)
+        self.assertNotIn("删除草稿", body, "「删除草稿」动词没随草稿退役")
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class SessionScopeTests(unittest.TestCase):
+    """会话解析域修复：证据页列主题全域，session 页旧解析域=current() 的家 Unit 并集——
+    列表域 ⊋ 解析域，证据落在别的成员区即「找不到」（0.62.0 真机实锤屏4 落锚入口全灭）。
+    修复=链接带 unit 参数 + session 页按主题成员并集解析；无参数向后兼容。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u6-scope-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws_a = base / "unit-a"
+        self.ws_a.mkdir()
+        init_workspace(self.ws_a, name="跨区甲", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        # 主题家=成员 B：这样 current()（甲区身份 Unit，并集只有本区）解析不到乙区的会话，
+        # 「不带 unit 参数 → 现状找不到」的对照才成立。
+        self.ws_b = base / "unit-b"
+        self.ws_b.mkdir()
+        init_workspace(self.ws_b, name="跨区乙", owner="tester")
+        self.unit_id = unitmatch.create_unit("跨区主题", self.ws_b)["unit_id"]
+        unitmatch.join_unit(self.unit_id, self.ws_a, role="evidence")
+
+    def _seed_member_b_session(self) -> None:
+        """证据会话落在成员 B：digest 行 + vault 分片（session_key 口径一致）。"""
+        folder = self.ws_b / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        key = "codex:sessions/b.jsonl"
+        entries = [{"source": "codex", "path": "sessions/b.jsonl", "events": 3,
+                    "session_key": key,
+                    "cwd": str(self.ws_b), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-22T00:59:00Z",
+                    "created_at": "2026-11-22T01:00:00Z", "last_ts": "2026-11-22T01:00:00Z"}]
+        (folder / "digest-20261122T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": 1,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+        from lab import vault as vault_mod
+        from lab.vault import reindex as vault_reindex, vault_root as vault_root_of
+
+        vault_mod.append_records(vault_mod.vault_root(), "codex", key, [
+            {"ts_utc": "2026-11-22T01:00:00Z", "granularity": "event", "session_key": key,
+             "role": "assistant", "type": "message", "text": "跨成员区会话的 assistant 块正文。",
+             "reasoning": None, "tool": None, "strip": [], "agent_id": "agt-1",
+                        "source": {"path": "sessions/b.jsonl", "line_no": 1, "bytes": 32,
+                        "source_sha256": "0" * 64}},
+        ])
+        vault_reindex(vault_root_of())
+        # 证据页列出的是主题全域：给这条跨区会话落一条 active 证据，链接才会出现
+        from lab import topics as topics_mod
+
+        topics_mod.create_topic("跨区主题")
+        records = unitmatch.digest_records_for([self.ws_b.as_posix()])
+        known = {(f.get("source"), f.get("path"))
+                 for r in records for f in r.get("files") or []}
+        topics_mod.select(topics_mod.resolve_topic("跨区主题")["topic_id"],
+                          [{"source": "codex", "path": "sessions/b.jsonl"}],
+                          decided_by="llm:test", known_keys=known)
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws_a).test_client()
+
+    def test_cross_member_session_resolves_with_unit_param(self) -> None:
+        """新卷：带 unit 参数 → 成员 B 的会话可解析，assistant 块与落锚入口渲染。"""
+        self._seed_member_b_session()
+        page = self._client().get("/session", query_string={
+            "source": "codex", "path": "sessions/b.jsonl", "unit": self.unit_id})
+        self.assertEqual(page.status_code, 200, "带 unit 参数仍解析不到成员区会话")
+        body = page.get_data(as_text=True)
+        self.assertIn("assistant 块", body)
+        self.assertIn("落锚到资产", body, "屏4 落锚入口没有渲染")
+        self.assertIn("跨成员区会话的 assistant 块正文", body)
+        # 证据页链接本身带上了主题参数
+        evidence = self._client().get("/evidence", query_string={"unit": self.unit_id}).get_data(as_text=True)
+        self.assertIn("unit=" + self.unit_id, evidence, "证据页会话链接没带 unit 参数")
+
+    def test_without_unit_param_keeps_current_scope_and_honest_miss(self) -> None:
+        """不带 unit 参数维持 current() 现状——成员 B 会话仍「找不到」（诚实账）。"""
+        self._seed_member_b_session()
+        client = self._client()
+        response = client.get("/session", query_string={"source": "codex", "path": "sessions/b.jsonl"})
+        self.assertEqual(response.status_code, 303)
+        body = client.get(response.headers["Location"]).get_data(as_text=True)
+        self.assertIn("找不到这个会话：codex / sessions/b.jsonl", body)
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class InjectionSourceTests(unittest.TestCase):
+    """注入源 ≡ 服役资产：web 面退役资产选择——注入源卡退场、
+    hero 承载状态并追加唯一手工动作「重新投放」；确认页固定服役资产；
+    无服役资产 → hero 空态句且无重新投放。CLI 显式 asset_id 照旧。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u7-src-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="口径工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("口径主题", self.ws)["unit_id"]
+        topics_mod.create_topic("口径主题")
+
+    def _seed_digest(self) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/a.jsonl", "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-22T00:59:00Z",
+                    "created_at": "2026-11-22T01:00:00Z", "last_ts": "2026-11-22T01:00:00Z"}]
+        (folder / "digest-20261122T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": 1,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _serve_asset(self) -> dict:
+        """CLI 权力路径：显式 asset_id 注入，立成服役资产。"""
+        from lab.asset import build_asset, list_assets
+        from lab.inject import inject_theme
+
+        self._seed_digest()
+        asset = build_asset(self.ws, "服役资产", [("codex", "sessions/a.jsonl")])
+        inject_theme(self.unit_id, asset["asset_id"])
+        return asset
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_hero_carries_redispatch_and_select_is_retired(self) -> None:
+        """hero 有「重新投放」；select 与「注入到这里」整体退场。"""
+        self._serve_asset()
+        body = self._client().get("/units").get_data(as_text=True)
+        self.assertIn("重新投放", body)
+        self.assertIn("/unit/inject/confirm?unit=", body)
+        self.assertNotIn("注入到这里", body, "注入源卡还留在页面上")
+        self.assertNotIn('name="asset_id"', body, "web 面还留着资产选择")
+
+    def test_confirm_page_fixes_the_serving_asset(self) -> None:
+        """确认页不再有资产选择——固定显示服役资产 + 将写入哪些区/面原形状。"""
+        asset = self._serve_asset()
+        client = self._client()
+        page = client.get("/unit/inject/confirm", query_string={"unit": self.unit_id})
+        self.assertEqual(page.status_code, 200)
+        body = page.get_data(as_text=True)
+        self.assertIn("确认注入", body)
+        self.assertIn(asset["asset_id"], body, "确认页没有固定显示服役资产")
+        self.assertIn("服役资产", body)
+        self.assertNotIn('name="asset_id"', body, "确认页还带着资产选择字段")
+        self.assertIn('name="unit"', body)
+        # POST 不再读 asset_id：confirm=1 直写也成立（按服役资产重新投放）
+        response = client.post("/unit/inject/apply",
+                               data={"unit": self.unit_id, "confirm": "1"})
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("notice=", response.headers["Location"])
+
+    def test_no_serving_asset_shows_empty_state_and_no_redispatch(self) -> None:
+        """无服役资产 → hero 空态句；「重新投放」不渲染；确认页诚实挡回。"""
+        self._seed_digest()
+        client = self._client()
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("未设注入源——重铸产出服役资产后自动投放", body)
+        # 改写，表尾 footnote 会出现「重新投放」一词（解释性），
+        # 改钉**重投放入口**（hero 行末链接）不渲染。
+        self.assertNotIn("重新投放</a>", body)
+        response = client.get("/unit/inject/confirm", query_string={"unit": self.unit_id})
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("error=", response.headers["Location"])
+        self.assertIn("还没有服役资产",
+                      client.get(response.headers["Location"]).get_data(as_text=True))
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class RenameDisplayTests(unittest.TestCase):
+    """改名写显示名源：topics.rename_topic（显示名唯一来源，M4）+
+    unitmatch.rename_unit 双写，失败任一不半写；表单预填=显示名；空名拒。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u8-rename-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="登记名单机版采集", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("登记名单机版采集", self.ws)["unit_id"]
+        topics_mod.create_topic("登记名单机版采集")
+        # M4 场景：登记名与显示名分叉——显示名读 topics 标签（卡片标题），不再是死界面
+        topics_mod.rename_topic(self.unit_id, "ctx-parser")
+        from web.app import create_app
+
+        self.client = create_app(self.ws).test_client()
+
+    def test_rename_follows_the_display_name(self) -> None:
+        """① 改名后卡片 display_name 跟随——topics 标签变更生效（死界面修复）。"""
+        response = self.client.post("/units/rename", data={"name": "ACPE 采集改造"})
+        self.assertEqual(response.status_code, 303)
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("ACPE 采集改造", body, "卡片标题没跟随改名——显示名源没写")
+        from lab import topics as topics_mod
+
+        self.assertEqual(topics_mod.topic_record(self.unit_id)["name"], "ACPE 采集改造")
+
+    def test_rename_syncs_the_registry_name_too(self) -> None:
+        """①续 · 双写：登记名跟随，回退=显示=一致（M4 不破——显示仍以 topics 为源）。"""
+        self.client.post("/units/rename", data={"name": "ACPE 采集改造"})
+        from lab import state
+
+        record = next(item for item in state.list_units()
+                      if item.get("unit_id") == self.unit_id)
+        self.assertEqual(record.get("name"), "ACPE 采集改造", "登记名没有跟随双写")
+
+    def test_rename_form_prefills_the_display_name(self) -> None:
+        """② 预填=显示名——「用户看到的名字」就是输入框里的名字。"""
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn('value="ctx-parser"', body, "预填还是登记名（单机版采集）")
+        self.assertNotIn('value="登记名单机版采集"', body)
+
+    def test_empty_name_is_refused(self) -> None:
+        """③ 空名拒（沿用仓库口径）。"""
+        response = self.client.post("/units/rename", data={"name": "   "})
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("error=", response.headers["Location"])
+        self.assertIn("名称不能为空",
+                      self.client.get(response.headers["Location"]).get_data(as_text=True))
+
+    def test_m4_regression_rename_targets_what_is_displayed(self) -> None:
+        """④ M4 回归：topics 标签存在时，改名改的就是显示的那个——
+        卡片标题（display_name）与登记名同时变更且一致。"""
+        self.client.post("/units/rename", data={"name": "改名后的主题"})
+        body = self.client.get("/units").get_data(as_text=True)
+        self.assertIn("改名后的主题", body)
+        from lab import topics as topics_mod, state
+
+        self.assertEqual(topics_mod.topic_record(self.unit_id)["name"], "改名后的主题")
+        record = next(item for item in state.list_units()
+                      if item.get("unit_id") == self.unit_id)
+        self.assertEqual(record.get("name"), "改名后的主题")
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class RelayBriefTests(unittest.TestCase):
+    """屏 5：时刻卡句式与按钮分级、结构化简报 payload 卡（预览页与 units 折面同形状）、
+    接力历史四列表格、assets 页顶部接力时机位。GET 零写入、POST 路由零新增。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u9k5-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="接力卡工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("接力卡主题", self.ws)["unit_id"]
+        topics_mod.create_topic("接力卡主题")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+
+    def _seed(self) -> dict:
+        """pending 换棒（codex→qoder）+ 服役资产带材料活引用 claim。"""
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": s, "path": "sessions/%s.jsonl" % s, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": ts, "created_at": ts, "last_ts": ts}
+                   for s, ts in (("codex", "2026-11-23T01:00:00Z"),
+                                 ("qoder", "2026-11-23T02:00:00Z"))]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": 2,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+        from lab.asset import attach_claims, build_asset
+
+        asset = build_asset(self.ws, "屏5资产", [("codex", "sessions/codex.jsonl")])
+        attach_claims(self.ws, asset["asset_id"], [
+            {"title": "材料 claim", "material": {"locator": {"ref": "docs/note.md"},
+                                                 "role": "task-spec"}},
+        ])
+        return asset
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_structured_brief_card_same_shape_on_preview_and_units_fold(self) -> None:
+        """payload 卡=标题行+新鲜徽标+四段 <b> 标签+材料块（role+快照态）；两处同形状。"""
+        self._seed()
+        client = self._client()
+        # units 折面先取（预览页 GET 会把时刻入账，一次性检出就消失——诚实账）
+        units_body = client.get("/units").get_data(as_text=True)
+        preview = client.get("/units/handoff/preview",
+                             query_string={"path": self.ws.as_posix()}).get_data(as_text=True)
+        self.assertIn("接力简报：codex → qoder · unit", preview, "标题行没落形")
+        self.assertIn('<span class="badge on">新鲜</span>', preview)
+        for section in ("<b>进行到哪：</b>", "<b>最近决策：</b>", "<b>开放问题：</b>", "<b>交接材料：</b>"):
+            self.assertIn(section, preview)
+        self.assertIn("（role: task-spec · ws-rel · 快照 ", preview, "材料块缺 role/快照")
+        self.assertIn("√ 未变）", preview, "材料快照态没现算")
+        self.assertIn("接力简报：codex → qoder · unit", units_body, "units 折面不是同形状")
+        self.assertIn("<b>交接材料：</b>", units_body)
+
+    def test_history_fold_is_a_four_column_table(self) -> None:
+        """历史升四列表格；简报列无窗口快照=「—」；送达徽标。"""
+        self._seed()
+        from lab import handoff
+
+        handoff.replay_handoffs(self.ws)
+        body = self._client().get("/units").get_data(as_text=True)
+        self.assertIn("<th>时刻</th><th>交接</th><th>简报</th><th>送达</th>", body)
+        self.assertIn('<span class="badge off">历史棒</span>', body)
+
+    def test_assets_top_moment_slot_two_states(self) -> None:
+        """assets 页顶部时机位有/无两态——同一张时刻卡（同宏同句式）。"""
+        self._seed()
+        client = self._client()
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertIn("检测到换 harness", body, "assets 页顶部没有时机位")
+        self.assertIn("按最近 5 会话铸简报", body)
+        response = client.post("/units/handoff/ignore", data={"path": self.ws.as_posix()})
+        self.assertEqual(response.status_code, 303)
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertNotIn("检测到换 harness", body, "忽略后时机位还挂着")
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class PipelineStationTests(unittest.TestCase):
+    """屏 6：三站 .pipe 条、下一棒 health 行（[现在就铸] 两态）、投影预告句、
+    角色表展示态（badges+details 内嵌原 select，零 JS）、推导现读行、棒上的 claims 卡。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u9k6-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="屏6工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("屏6主题", self.ws)["unit_id"]
+        topics_mod.create_topic("屏6主题")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+
+    def _seed_digest(self, harnesses=("zed", "claude-code", "codex", "qoder")) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamps = {"zed": "2026-11-23T00:00:00Z", "claude-code": "2026-11-23T00:30:00Z",
+                  "codex": "2026-11-23T01:00:00Z", "qoder": "2026-11-23T02:00:00Z"}
+        entries = [{"source": s, "path": "sessions/%s.jsonl" % s, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": stamps[s], "created_at": stamps[s], "last_ts": stamps[s]}
+                   for s in harnesses]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _serve_with_claims(self, drift: bool = False) -> dict:
+        """服役资产：一条材料活引用 + 一条冻结引文（vault 分片），两种引用同框。"""
+        from lab.asset import attach_claims, build_asset
+        from lab.inject import inject_theme
+        from lab import vault as vault_mod
+        from lab.vault import reindex as vault_reindex, vault_root as vault_root_of
+
+        self._seed_digest()
+        asset = build_asset(self.ws, "屏6资产", [("codex", "sessions/codex.jsonl")])
+        key = "codex:sessions/codex.jsonl"
+        vault_mod.append_records(vault_mod.vault_root(), "codex", key, [
+            {"ts_utc": "2026-11-23T01:00:30Z", "granularity": "event", "session_key": key,
+             "role": "assistant", "type": "message", "text": "冻结引文正文。",
+             "reasoning": None, "tool": None, "strip": [], "agent_id": "agt-1",
+             "source": {"path": "sessions/codex.jsonl", "line_no": 1, "bytes": 32,
+                        "source_sha256": "0" * 64}},
+        ])
+        vault_reindex(vault_root_of())
+        attach_claims(self.ws, asset["asset_id"], [
+            {"title": "材料 claim", "material": {"locator": {"ref": "docs/note.md"},
+                                                 "role": "task-spec"}},
+            {"title": "引文 claim", "session_key": key,
+             "from_ts": "2026-11-23T01:00:00Z", "to_ts": "2026-11-23T01:01:00Z"},
+        ])
+        if drift:
+            (self.ws / "docs" / "note.md").write_text("文件被改过\n", encoding="utf-8", newline="\n")
+        inject_theme(self.unit_id, asset["asset_id"])
+        return asset
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def _configure_roles(self, client) -> None:
+        # 验收站也给持棒 harness（屏 6 的三站齐配形状），health 行才有「下一棒」可指。
+        client.post("/units/pipeline", data={"unit": self.unit_id, "role_codex": "任务书",
+                                             "role_qoder": "施工", "role_claude-code": "验收"})
+
+    def test_pipe_bar_shape_and_unconfigured_degradation(self) -> None:
+        """K6-1：三站盒（棒位徽标/已完成 ✓/未开始）+ 未配表退化=引导句无 pipe 盒。"""
+        client = self._client()
+        self._seed_digest()
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("接力：未启用——三站流水线（任务书→施工→验收）", body)
+        self.assertNotIn('class="pipe ', body, "未配表也画了三站条")
+        self._configure_roles(client)
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn('class="pipe current"', body)
+        self.assertIn("棒位", body)
+        # 残差修复改写：站态按序——施工已完成 ⇒ 任务书也是
+        # 「已完成 ✓」，三站里不再有「未开始」。
+        self.assertGreaterEqual(body.count("已完成 ✓"), 2, "站态没按序：任务书站没随施工完成")
+        self.assertNotIn("未开始", body)
+        self.assertIn("qoder · 施工", body, "持站 harness 没从角色表反查")
+
+    def test_next_health_line_cast_button_two_states(self) -> None:
+        """K6-2：health 行（将收到 <角色>简报 · 投给 <harness> 的<装载面>）；
+        [现在就铸] 仅 pending 渲染；[设置…] 恒在。"""
+        self._serve_with_claims()
+        client = self._client()
+        self._configure_roles(client)
+        # 无 pending：末两场同 harness（诚实账——零伪造）
+        self._seed_digest(("codex", "qoder", "qoder"))
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("下一棒：", body)
+        self.assertIn("将收到", body)
+        self.assertIn("[设置…]", body)
+        self.assertNotIn("[现在就铸]", body, "无 pending 也渲染了现在就铸——零伪造被破坏")
+        self.assertIn("触发：digest 检出上一会话 harness → 新会话 harness", body)
+        # pending 回来：[现在就铸] 渲染
+        self._seed_digest(("codex", "qoder"))
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("[现在就铸]", body)
+
+    def test_projection_foreword_and_derivation_line(self) -> None:
+        """K6-3/K6-5：投影预告句与推导现读行（⇒ 链路 + 零推断零额度）。"""
+        self._serve_with_claims()
+        client = self._client()
+        self._configure_roles(client)
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("验收阶段自动换投影：验收视角载荷以「施工产出/偏差」开头", body)
+        self.assertIn("推导现读：最近会话 <b>qoder</b>", body)
+        self.assertIn("全程零推断、零额度", body)
+
+    def test_role_table_display_state_with_details_edit(self) -> None:
+        """K6-4：展示态 badges + [改]/[指派…] 开 details 内嵌原 select+保存（零 JS，路由原样）。"""
+        self._serve_with_claims()
+        client = self._client()
+        self._configure_roles(client)
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn('<span class="badge violet">任务书</span>', body)
+        self.assertIn('<span class="badge violet">施工</span>', body)
+        self.assertIn("[改]", body)
+        self.assertIn("[指派…]", body)
+        self.assertIn('action="/units/pipeline"', body)
+        self.assertIn('name="role_codex"', body, "details 里没有内嵌原 select")
+        self.assertIn("保存</button>", body)
+
+    def test_claims_card_badge_mapping_and_empty_state(self) -> None:
+        """K6-6：claims 三列徽标映射（活引用/冻结引文/核对三态）与空态；两路径链接。"""
+        self._serve_with_claims()
+        client = self._client()
+        self._configure_roles(client)
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn('<span class="badge violet">活引用</span>', body)
+        self.assertIn('<span class="badge on">冻结引文</span>', body)
+        self.assertIn('<span class="badge on">核对有效 ✓</span>', body)
+        self.assertIn('<span class="badge on">文件未变 ✓</span>', body)
+        self.assertIn("去会话详情选段引用", body)
+        self.assertIn("引用材料文件…", body)
+        self.assertIn("落锚前整批核对，失败一个字节不改", body)
+        # 文件已变（诚实账）
+        self._serve_with_claims(drift=True)
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn('<span class="badge off">文件已变</span>', body)
+        self.assertIn("读最新版即可；重铸刷新快照", body)
+
+    def test_claims_card_empty_state(self) -> None:
+        self._seed_digest()
+        body = self._client().get("/units").get_data(as_text=True)
+        self.assertIn("这份资产还没有 claims", body)
+
+
+@unittest.skipUnless(HAVE_FLASK, "Flask is not installed in this interpreter")
+class PayloadPreviewTests(unittest.TestCase):
+    """屏 7：资产页「按受众预览载荷」details——并排投影盒（project_text_for 现算，
+    角色视角句/净增益折叠自动在内），asset.json 字节不动、GET 两次一致（现算非存储）。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u9k7-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="屏7工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("屏7主题", self.ws)["unit_id"]
+        topics_mod.create_topic("屏7主题")
+
+    def _seed(self) -> dict:
+        """4 场 codex 会话 + 1 场 qoder；资产引用其中 3 场（净增益 3/3 达折叠阈值）。"""
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        paths = [("codex", "sessions/a.jsonl"), ("codex", "sessions/b.jsonl"),
+                 ("codex", "sessions/c.jsonl"), ("codex", "sessions/d.jsonl"),
+                 ("qoder", "sessions/e.jsonl")]
+        entries = [{"source": s, "path": p, "events": 3, "cwd": str(self.ws),
+                    "keys": ["source", "path", "events"], "transcript": True,
+                    "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"} for s, p in paths]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+        from lab.asset import build_asset
+        from lab.inject import inject_theme
+
+        asset = build_asset(self.ws, "屏7资产", paths[:3])
+        inject_theme(self.unit_id, asset["asset_id"])
+        return asset
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_payload_preview_boxes_render(self) -> None:
+        """K7-1：折面在服役资产行下；盒标题=harness+角色视角+通道·字数徽标；视角句内插。"""
+        from lab.asset import find_asset
+
+        asset = self._seed()
+        client = self._client()
+        client.post("/units/pipeline", data={"unit": self.unit_id, "role_codex": "任务书",
+                                             "role_qoder": "施工"})
+        asset_file = find_asset(Path(unitmatch.home_path(self.unit_id)), asset["asset_id"])
+        before = (asset_file / "asset.json").read_bytes()
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertIn("按受众预览载荷 ▸", body)
+        self.assertIn("① 给 codex（任务书视角）", body)
+        self.assertIn("AGENTS.md · ", body)
+        self.assertIn("字</span>", body)
+        self.assertIn("本载荷按「任务书」视角渲染", body, "角色视角句没进投影")
+        self.assertIn("① 给 qoder（施工视角）", body)
+        self.assertIn("hook · ", body)
+        after = (asset_file / "asset.json").read_bytes()
+        self.assertEqual(before, after, "投影动了 asset.json——K7 红线")
+        # GET 两次一致（现算非存储）
+        self.assertEqual(client.get("/assets").get_data(as_text=True),
+                         client.get("/assets").get_data(as_text=True))
+
+    def test_net_gain_fold_sentence_appears(self) -> None:
+        """测试：净增益折叠句出现例（占比≥50% 且 ≥3 条）——3/3 来自查看方。"""
+        self._seed()
+        client = self._client()
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertIn("条里 3 条来自你——已折叠。", body)
+
+    def test_no_serving_asset_no_preview(self) -> None:
+        """无服役资产的块不渲染折面。"""
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": [], "file_count": 0,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+        body = self._client().get("/assets").get_data(as_text=True)
+        self.assertNotIn("按受众预览载荷 ▸", body)
+
+
+class WorkspaceBoardTests(unittest.TestCase):
+    """屏 8：工作区表 5→4 列（降级次级行不删信息）+ 立即重铸挪 hero 下
+    + 表尾 footnote + 接力卡副句/空态句 + confirm 页 context() 恢复库存 strip。
+    POST 路由零新增零改名、GET 零写入。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u9k8-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="屏8工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("屏8主题", self.ws)["unit_id"]
+        topics_mod.create_topic("屏8主题")
+
+    def _seed(self) -> None:
+        """5 场 codex 会话（streak 可读）+ 服役资产注入。"""
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        paths = [("codex", "sessions/%s.jsonl" % ch) for ch in "abcde"]
+        entries = [{"source": s, "path": p, "events": 3, "cwd": str(self.ws),
+                    "keys": ["source", "path", "events"], "transcript": True,
+                    "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"} for s, p in paths]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+        from lab.asset import build_asset
+        from lab.inject import inject_theme
+
+        asset = build_asset(self.ws, "屏8资产", paths[:3])
+        inject_theme(self.unit_id, asset["asset_id"])
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_workspace_table_four_columns_with_demoted_rows(self) -> None:
+        """K8-1：4 列表头；身份/会话事件/采集根降为成员工作区格 muted 次级行（信息不删）；
+        装载面格显示通道串；footnote 在表尾。"""
+        self._seed()
+        body = self._client().get("/units").get_data(as_text=True)
+        plane = outside_details_blocks(body)
+        for head in ("成员工作区", "装载面", "投递状态", "投放"):
+            self.assertIn(head, plane, "4 列表头缺 %s" % head)
+        self.assertNotIn("会话 / 事件", plane, "旧 5 列表头还在")
+        # 降级信息仍在（不删只降）——会话/事件数与采集根 chip 都在成员工作区格
+        self.assertIn("5 / ", body, "会话/事件降级行丢了")
+        self.assertIn("未声明采集根", body, "采集根降级 chip 丢了")
+        # 装载面格：本夹具无装载面 → 显「—」（不造假）
+        # K8-4 footnote
+        self.assertIn("重铸后自动投全体成员（除非某区被暂停）", body)
+        self.assertIn("唯一保留的手工动作", body)
+
+    def test_reforge_button_below_hero_with_hero_sentence(self) -> None:
+        """K8-2/3：hero 下一行=「注入源 ≡ 服役资产」muted 句 + 立即重铸按钮；管理区摘要去「注入源」。"""
+        self._seed()
+        body = self._client().get("/units").get_data(as_text=True)
+        self.assertIn("注入源 ≡ 服役资产（唯一，无需选择）", body)
+        self.assertIn("立即重铸", body)
+        self.assertLess(body.index("注入源 ≡ 服役资产"), body.index("立即重铸"),
+                        "立即重铸没在 hero 句下方")
+        self.assertIn("展开管理（家 · 改名 · 说明 · 可并入）", body)
+        self.assertNotIn("展开管理（家 · 改名 · 说明 · 注入源", body)
+
+    def test_relay_card_subtitle_and_empty_state(self) -> None:
+        """K8-5：接力卡头副句；空态句=屏 5 形状，streak 信息降 muted 第二行不删。"""
+        self._seed()
+        body = self._client().get("/units").get_data(as_text=True)
+        self.assertIn("主题资产管「地图」，接力简报管「换棒那一刻」——两个产物，同一套铸造与投放设施", body)
+        self.assertIn("本协作主题暂无待处理的接力时机。规则：新 harness 首会话 / 角色切换出现时，"
+                      "铸对应类型的简报并只投给接棒的一侧。", body)
+        # streak 信息降级不删
+        self.assertIn("都是同一 harness", body)
+
+    def test_inject_confirm_page_carries_base_context(self) -> None:
+        """K8-6①：确认页补 **context(...)——库存 strip 与版本号回到确认页（历史欠账并刀）。"""
+        self._seed()
+        client = self._client()
+        body = client.get("/unit/inject/confirm", query_string={"unit": self.unit_id,
+                                                                "path": str(self.ws)}).get_data(as_text=True)
+        self.assertIn("确认注入", body)
+        self.assertIn("库存：工作区", body, "确认页缺库存 strip——context() 没接上")
+        self.assertIn("v0.", body, "确认页缺版本号——context() 没接上")
+        self.assertIn("全体成员", body)
+        self.assertIn('action="/unit/inject/apply"', body, "POST 路由被动了")
+
+
+class ResidualFixTests(unittest.TestCase):
+    """残差修复（0.64.0 真机走查三处）：①站态按序 ②mapped 即渲染 health 行
+    （下一站无持棒 → 诚实变体）③装载面计入 hook。POST 零新增零改名、GET 零写入。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u10-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="残差工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("残差主题", self.ws)["unit_id"]
+        topics_mod.create_topic("残差主题")
+
+    def _seed_digest(self, harnesses=("codex", "qoder", "qoder")) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamps = {"codex": "2026-11-23T01:00:00Z", "qoder": "2026-11-23T02:00:00Z",
+                  "zed": "2026-11-23T00:00:00Z"}
+        entries = [{"source": s, "path": "sessions/%s.jsonl" % s, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": stamps[s], "created_at": stamps[s], "last_ts": stamps[s]}
+                   for s in harnesses]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_completed_station_marks_earlier_stations_done(self) -> None:
+        """①站态按序：codex=任务书、qoder=施工、最近会话 qoder ⇒ completed=施工——
+        任务书站也显「已完成 ✓」（旧账把之前的站标「未开始」）。"""
+        self._seed_digest()
+        client = self._client()
+        client.post("/units/pipeline", data={"unit": self.unit_id, "role_codex": "任务书",
+                                             "role_qoder": "施工"})
+        body = client.get("/units").get_data(as_text=True)
+        self.assertGreaterEqual(body.count("已完成 ✓"), 2, "任务书站没随施工完成标已完成")
+        self.assertIn("— · 验收", body, "下一棒站没显棒位（验收无人持棒=—）")
+
+    def test_mapped_without_next_holder_shows_honest_variant(self) -> None:
+        """②门控放宽：mapped 且下一站「验收」无人持棒 → health 行诚实变体
+        + 投影预告句 + 推导现读行（持棒 —）都渲染；[现在就铸] 仍仅 pending。"""
+        self._seed_digest()
+        client = self._client()
+        client.post("/units/pipeline", data={"unit": self.unit_id, "role_codex": "任务书",
+                                             "role_qoder": "施工"})
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("下一棒：<b>验收</b>（站）· 还没人持棒", body, "诚实变体句没渲染")
+        self.assertIn("在下面角色表给「验收」指派 harness", body)
+        self.assertIn("验收阶段自动换投影", body, "投影预告句没渲染")
+        self.assertIn("推导现读：最近会话 <b>qoder</b>", body)
+        self.assertIn("⇒ 持棒 <b>—</b>", body)
+        self.assertNotIn("[现在就铸]", body, "无 pending 也渲染了现在就铸")
+
+    def test_hook_registration_counts_as_face(self) -> None:
+        """③装载面计入 hook：hook_registered 且 inj.faces 空 → 装载面格显
+        「qoder hook（已注册）」；不是「—」。"""
+        self._seed_digest()
+        client = self._client()
+        from lab.asset import build_asset
+        from lab.inject import inject_theme
+
+        asset = build_asset(self.ws, "残差资产", [("codex", "sessions/codex.jsonl")])
+        inject_theme(self.unit_id, asset["asset_id"])
+        client.post("/unit/inject/hook", data={"path": str(self.ws), "confirm": "1"})
+        body = client.get("/units").get_data(as_text=True)
+        self.assertIn("qoder hook（已注册）", body, "hook 没计入装载面格")
+
+
+class SingleSlotTests(unittest.TestCase):
+    """单槽落盘+指纹语义：写固定槽 assets/current/；同指纹不写盘不进账本；
+    新指纹覆写同一槽；注入读侧读当前槽（指纹不符=偏旧语义）；确定性指纹不变。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u11k1-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="K1工作区", owner="tester")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("K1主题", self.ws)["unit_id"]
+        topics_mod.create_topic("K1主题")
+        self._seed_digest()
+
+    def _seed_digest(self, names=("a", "b")) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/%s.jsonl" % name, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"} for name in names]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_same_fingerprint_skips_write(self) -> None:
+        from lab.asset import build_asset, current_asset_dir
+
+        first = build_asset(self.ws, "K1资产", [("codex", "sessions/a.jsonl")])
+        slot = current_asset_dir(self.ws, self.unit_id)
+        self.assertEqual(slot.name, "current", "没写固定槽")
+        manifest_before = (slot / "manifest.json").read_bytes()
+        again = build_asset(self.ws, "K1资产", [("codex", "sessions/a.jsonl")])
+        self.assertTrue(again.get("unchanged"))
+        self.assertIn("没变不重铸", again.get("reason") or "")
+        self.assertEqual((slot / "manifest.json").read_bytes(), manifest_before,
+                         "同指纹还动了盘")
+
+    def test_new_fingerprint_overwrites_same_slot(self) -> None:
+        from lab.asset import build_asset, current_asset_dir
+
+        first = build_asset(self.ws, "K1资产", [("codex", "sessions/a.jsonl")])
+        second = build_asset(self.ws, "K1资产乙", [("codex", "sessions/a.jsonl"),
+                                                   ("codex", "sessions/b.jsonl")])
+        self.assertNotEqual(first["asset_id"], second["asset_id"])
+        slot = current_asset_dir(self.ws, self.unit_id)
+        data = json.loads((slot / "asset.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["asset_id"], second["asset_id"], "槽里不是最新指纹")
+        legacy = list((self.ws / ".groma" / "assets").glob("asset-*"))
+        self.assertEqual(legacy, [], "又长出了 asset-* 多代目录")
+
+    def test_injection_read_side_reads_slot_with_honest_stale(self) -> None:
+        from lab.asset import build_asset
+        from lab.inject import inject_theme, refresh
+
+        asset_a = build_asset(self.ws, "K1资产", [("codex", "sessions/a.jsonl")])
+        inject_theme(self.unit_id, asset_a["asset_id"])
+        res = refresh(self.ws)
+        self.assertNotEqual(res["state"], "paused")
+        asset_b = build_asset(self.ws, "K1资产乙", [("codex", "sessions/a.jsonl"),
+                                                    ("codex", "sessions/b.jsonl")])
+        # 槽指纹已变：refresh 读当前槽（不按目录身份找旧 id），收敛投影、不报缺资产；
+        # 账面 source 仍是人点定的旧 id（偏旧语义），payload 已按新槽收敛
+        res2 = refresh(self.ws)
+        self.assertNotEqual(res2["state"], "paused")
+        self.assertTrue(res2.get("payload_sha256"))
+        self.assertTrue(res2.get("changed"), "新指纹没收敛进 payload")
+
+    def test_deterministic_fingerprint_unchanged(self) -> None:
+        from lab.asset import build_asset
+
+        one = build_asset(self.ws, "指纹", [("codex", "sessions/a.jsonl"),
+                                            ("codex", "sessions/b.jsonl")])
+        two = build_asset(self.ws, "指纹", [("codex", "sessions/b.jsonl"),
+                                            ("codex", "sessions/a.jsonl")])
+        self.assertEqual(one["asset_id"], two["asset_id"],
+                         "同输入不同顺序算出不同指纹——确定性被破坏")
+        self.assertTrue(two.get("unchanged"), "顺序不同的同输入没被识别为同指纹")
+
+
+class ClaimInheritanceTests(unittest.TestCase):
+    """claims 跨代继承：覆写前逐条核对带入——冻结引文对 vault 分片 sha、
+    材料对文件指纹；可核对带入、失效按原因分桶（skipped_claims）进返回值与账本；
+    首次重铸空继承。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u11k2-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="K2工作区", owner="tester")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("K2主题", self.ws)["unit_id"]
+        topics_mod.create_topic("K2主题")
+        self._seed_digest()
+        self._vault_key = self._make_vault_shard()
+
+    def _seed_digest(self) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/%s.jsonl" % name, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"} for name in ("a", "b")]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _make_vault_shard(self) -> str:
+        from lab import vault as vault_mod
+        from lab.vault import reindex as vault_reindex
+
+        key = "codex:sessions/a.jsonl"
+        vault_mod.append_records(vault_mod.vault_root(), "codex", key, [
+            {"ts_utc": "2026-11-23T01:00:30Z", "granularity": "event", "session_key": key,
+             "role": "assistant", "type": "message", "text": "冻结引文正文。",
+             "reasoning": None, "tool": None, "strip": [], "agent_id": "agt-1",
+             "source": {"path": "sessions/a.jsonl", "line_no": 1, "bytes": 32,
+                        "source_sha256": "0" * 64}},
+        ])
+        vault_reindex(vault_mod.vault_root())
+        return key
+
+    def _quote_claim(self) -> dict:
+        return {"title": "引文 claim", "session_key": self._vault_key,
+                "from_ts": "2026-11-23T01:00:00Z", "to_ts": "2026-11-23T01:01:00Z"}
+
+    def _slot_json(self):
+        from lab.asset import current_asset_dir
+
+        return json.loads((current_asset_dir(self.ws, self.unit_id) / "asset.json")
+                          .read_text(encoding="utf-8"))
+
+    def test_verified_quote_survives_reforge(self) -> None:
+        """可核对冻结引文跨代存活，payload claims 不断链。"""
+        from lab.asset import attach_claims, build_asset
+
+        first = build_asset(self.ws, "K2资产", [("codex", "sessions/a.jsonl")])
+        attach_claims(self.ws, first["asset_id"], [self._quote_claim()])
+        second = build_asset(self.ws, "K2资产乙", [("codex", "sessions/a.jsonl"),
+                                                   ("codex", "sessions/b.jsonl")])
+        self.assertNotEqual(first["asset_id"], second["asset_id"])
+        self.assertFalse(second.get("skipped_claims"))
+        self.assertEqual(second.get("inherited_claims"), 1)
+        claims = self._slot_json()["claims"]
+        self.assertEqual([c["title"] for c in claims], ["引文 claim"], "冻结引文没跨代存活")
+        self.assertEqual(claims[0]["state"], "verified")
+
+    def test_material_survival_and_drift_buckets(self) -> None:
+        """材料活引用：文件未变跨代存活；文件已变→skipped_claims material_drift 分桶。"""
+        from lab.asset import attach_claims, build_asset
+
+        first = build_asset(self.ws, "K2材料", [("codex", "sessions/a.jsonl")])
+        attach_claims(self.ws, first["asset_id"], [{
+            "title": "材料 claim", "material": {"locator": {"ref": "docs/note.md"},
+                                                "role": "task-spec"}}])
+        # 文件未变：带入
+        second = build_asset(self.ws, "K2材料乙", [("codex", "sessions/a.jsonl"),
+                                                   ("codex", "sessions/b.jsonl")])
+        self.assertFalse(second.get("skipped_claims"))
+        self.assertEqual([c["title"] for c in self._slot_json()["claims"]], ["材料 claim"])
+        # 文件已变：失效计数分桶
+        (self.ws / "docs" / "note.md").write_text("被改过\n", encoding="utf-8", newline="\n")
+        third = build_asset(self.ws, "K2材料丙", [("codex", "sessions/a.jsonl")])
+        self.assertEqual(third.get("skipped_claims"), {"material_drift": 1})
+        self.assertEqual(self._slot_json().get("claims") or [], [])
+
+    def test_first_build_is_empty_inheritance(self) -> None:
+        from lab.asset import build_asset
+
+        asset = build_asset(self.ws, "首次", [("codex", "sessions/a.jsonl")])
+        self.assertEqual(asset.get("inherited_claims"), 0)
+        self.assertEqual(asset.get("skipped_claims"), {})
+        self.assertIsNone(self._slot_json().get("claims"))
+
+    def test_reforge_ledger_carries_skipped_claims(self) -> None:
+        """skipped_claims 进 reforges 账本（与 skipped_stale 同款待遇）。"""
+        from lab import topics as topics_mod
+
+        topics_mod.select(self.unit_id, [{"source": "codex", "path": "sessions/a.jsonl"}],
+                          decided_by="human", known_keys={("codex", "sessions/a.jsonl")})
+        out = topics_mod.reforge(self.ws, self.unit_id)
+        self.assertFalse(out["asset"].get("skipped_claims"))
+        last = topics_mod.last_reforge(self.unit_id)
+        self.assertIn("skipped_claims", last, "账本没记 claims 分桶字段")
+        self.assertEqual(last["skipped_claims"], {})
+
+
+class AssetLedgerTests(unittest.TestCase):
+    """web 账面与动词退役：单资产账面+重铸账本摘要行；/assets/build 与
+    /assets/delete 退役；落锚撤资产下拉恒写当前槽；verify 恒当前槽；护栏卡新话。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u11k3-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="K3工作区", owner="tester")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("K3主题", self.ws)["unit_id"]
+        topics_mod.create_topic("K3主题")
+        self._seed_digest()
+
+    def _seed_digest(self) -> None:
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/%s.jsonl" % name, "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"} for name in ("a", "b")]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": len(entries),
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _client(self):
+        from web.app import create_app
+
+        return create_app(self.ws).test_client()
+
+    def test_single_asset_account_with_reforge_ledger(self) -> None:
+        """账面单资产 + 重铸账本摘要行（共 N 笔 · 最近笔）+ 最近 5 笔折面。"""
+        from lab import topics as topics_mod
+
+        topics_mod.select(self.unit_id, [{"source": "codex", "path": "sessions/a.jsonl"}],
+                          decided_by="human", known_keys={("codex", "sessions/a.jsonl")})
+        topics_mod.reforge(self.ws, self.unit_id)
+        topics_mod.undo(self.unit_id, [("codex", "sessions/a.jsonl")], decided_by="human")
+        topics_mod.select(self.unit_id, [{"source": "codex", "path": "sessions/b.jsonl"}],
+                          decided_by="human", known_keys={("codex", "sessions/b.jsonl")})
+        topics_mod.reforge(self.ws, self.unit_id)
+        body = self._client().get("/assets").get_data(as_text=True)
+        self.assertIn("重铸账本：共 2 笔", body, "账本摘要行没渲染")
+        self.assertIn("最近 5 笔 ▸", body)
+        self.assertNotIn("另有", body, "历史折叠区没退役")
+        self.assertNotIn("高级：从会话手工生成草稿", body)
+
+    def test_anchor_has_no_asset_dropdown_and_writes_slot(self) -> None:
+        from lab.asset import build_asset, current_asset_dir
+
+        build_asset(self.ws, "K3资产", [("codex", "sessions/a.jsonl")])
+        client = self._client()
+        body = client.get("/assets").get_data(as_text=True)
+        self.assertNotIn('name="asset_id"', body.split("assets/anchor")[1],
+                         "落锚表单还留着资产下拉")
+        response = client.post("/assets/anchor", data={
+            "title": "材料引文", "material_ref": "docs/note.md", "material_role": "task-spec"})
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn("error=", response.headers["Location"])
+        slot = current_asset_dir(self.ws, self.unit_id) / "asset.json"
+        claims = json.loads(slot.read_text(encoding="utf-8")).get("claims") or []
+        self.assertEqual([c.get("title") for c in claims], ["材料引文"], "落锚没写进当前槽")
+
+    def test_verify_targets_current_slot_ignoring_posted_id(self) -> None:
+        from lab.asset import attach_claims, build_asset
+
+        asset = build_asset(self.ws, "K3核对", [("codex", "sessions/a.jsonl")])
+        attach_claims(self.ws, asset["asset_id"], [{
+            "title": "材料 claim", "material": {"locator": {"ref": "docs/note.md"},
+                                                "role": "task-spec"}}])
+        client = self._client()
+        response = client.post("/assets/verify", data={
+            "asset_id": "asset-bogus", "path": str(self.ws)})
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn("error=", response.headers["Location"], "verify 没恒验当前槽")
+        self.assertIn("notice=", response.headers["Location"])
+
+    def test_retired_routes_are_gone(self) -> None:
+        client = self._client()
+        for path, data in (
+            ("/assets/build", {"title": "x", "session": ["codex:sessions/a.jsonl"]}),
+            ("/assets/delete", {"asset_id": "asset-x", "confirm": "1"}),
+        ):
+            response = client.post(path, data=data)
+            self.assertEqual(response.status_code, 404, "%s 没退役" % path)
+        self.assertEqual(client.get("/assets/delete?asset_id=asset-x").status_code, 404)
+
+    def test_guardrail_card_new_wording_in_visible_plane(self) -> None:
+        from lab.asset import build_asset
+
+        build_asset(self.ws, "护栏", [("codex", "sessions/a.jsonl")])
+        plane = outside_details_blocks(self._client().get("/assets").get_data(as_text=True))
+        self.assertIn("注入跟随机器设置自动走", plane)
+        self.assertIn("唯一手工动作=重新投放", plane)
+        self.assertIn("没变不重铸", plane)
+        self.assertIn("别人的资产绝不顶掉", plane)
+
+
+class AssetCliMigrationTests(unittest.TestCase):
+    """CLI 收编+迁移：asset build --check 不落盘；migrate-singleton 不带 --yes
+    只打印清单；带 --yes 合并去重 claims+核对+删历史代+报告计数；CLI 双模式幂等。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u11k4-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="K4工作区", owner="tester")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("K4主题", self.ws)["unit_id"]
+        topics_mod.create_topic("K4主题")
+        folder = self.ws / ".groma" / "digests"
+        folder.mkdir(parents=True, exist_ok=True)
+        entries = [{"source": "codex", "path": "sessions/a.jsonl", "events": 3,
+                    "cwd": str(self.ws), "keys": ["source", "path", "events"],
+                    "transcript": True, "transcript_lines": 12, "parse_errors": 0,
+                    "first_ts": "2026-11-23T01:00:00Z", "created_at": "2026-11-23T01:00:00Z",
+                    "last_ts": "2026-11-23T02:00:00Z"}]
+        (folder / "digest-20261123T000000Z.json").write_text(
+            json.dumps({"schema": 1, "files": entries, "file_count": 1,
+                        "unattributed_outside": 0, "unattributed_no_cwd": 0}),
+            encoding="utf-8", newline="\n")
+
+    def _run_cli(self, *argv: str) -> tuple[int, dict]:
+        import contextlib
+        import io
+
+        from lab import cli as cli_mod
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+            code = cli_mod.main(["--root", str(self.ws)] + list(argv))
+        text = buffer.getvalue()
+        return code, (json.loads(text) if text.strip() else {})
+
+    def _seed_generations(self) -> list[Path]:
+        """造两代历史目录：asset-old1（材料 claim 已漂移）、asset-old2（同一材料 claim 未变）。"""
+        base = self.ws / ".groma" / "assets"
+        base.mkdir(parents=True, exist_ok=True)
+        import hashlib
+
+        unchanged = hashlib.sha256((self.ws / "docs" / "note.md").read_bytes()).hexdigest()
+        claims_a = [{"title": "漂移材料", "material": {"locator": {"ref": "docs/note.md"},
+                                                    "role": "task-spec",
+                                                    "snapshot_sha256": "0" * 64},
+                     "state": "verified"}]
+        claims_b = [{"title": "存活材料", "material": {"locator": {"ref": "docs/note.md"},
+                                                    "role": "task-spec",
+                                                    "snapshot_sha256": unchanged},
+                     "state": "verified"}]
+        gens = []
+        for name, claims, keys in (("asset-old1", claims_a, ["codex", "a", "任务书"]),
+                                   ("asset-old2", claims_b, ["codex", "a", "任务书"])):
+            folder = base / name
+            folder.mkdir()
+            payload = {"schema": 1, "kind": "GROMA_LOCAL_CONTEXT_ASSET", "asset_id": name,
+                       "title": name, "status": "draft", "generated_at": "2026-11-22T00:00:00Z",
+                       "workspace_name": "K4工作区", "workspace_ref": "wsref",
+                       "unit_id": self.unit_id, "org_path": None, "workspace_count": 1,
+                       "digest": "d", "digest_sha256": "0" * 64, "digests": [],
+                       "totals": {"sessions": 1, "events": 1}, "agents": [],
+                       "sessions": [], "claims": claims, "profile": "claim-anchored",
+                       "notes": "", "content_stored": False}
+            (folder / "asset.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                               encoding="utf-8", newline="\n")
+            gens.append(folder)
+        return gens
+
+    def test_check_mode_writes_nothing(self) -> None:
+        from lab.asset import current_asset_dir
+
+        code, out = self._run_cli("asset", "build", "--title", "预演", "--session",
+                                  "codex:sessions/a.jsonl", "--check")
+        self.assertEqual(code, 0)
+        self.assertTrue(out["planned"])
+        self.assertIn("预演", out["note"])
+        self.assertFalse(current_asset_dir(self.ws, self.unit_id).exists(), "--check 落盘了")
+
+    def test_migrate_without_yes_only_prints_plan(self) -> None:
+        gens = self._seed_generations()
+        code, out = self._run_cli("asset", "migrate-singleton", "--unit", self.unit_id)
+        self.assertEqual(code, 0)
+        self.assertFalse(out["applied"])
+        self.assertIn("--yes", out["note"])
+        self.assertEqual(out["candidate_claims"], 2)
+        self.assertEqual(out["delete_dirs"], 2)
+        for folder in gens:
+            self.assertTrue(folder.is_dir(), "没带 --yes 却删了历史代")
+
+    def test_migrate_with_yes_merges_dedupes_and_deletes(self) -> None:
+        from lab.asset import current_asset_dir
+
+        gens = self._seed_generations()
+        code, out = self._run_cli("asset", "migrate-singleton", "--unit", self.unit_id, "--yes")
+        self.assertEqual(code, 0)
+        self.assertTrue(out["applied"])
+        # 三条 claims 里：漂移材料失效（material_drift），存活材料×2 去重后只留 1。
+        self.assertEqual(out["merged_claims"], 1)
+        self.assertEqual(out["skipped_claims"], {"material_drift": 1})
+        self.assertEqual(out["removed_dirs"], 2)
+        slot = current_asset_dir(self.ws, self.unit_id) / "asset.json"
+        self.assertTrue(slot.is_file(), "单槽没写出来")
+        titles = [c.get("title") for c in json.loads(slot.read_text(encoding="utf-8"))["claims"]]
+        self.assertEqual(titles, ["存活材料"], "合并集不对")
+        for folder in gens:
+            self.assertFalse(folder.exists(), "历史代没删干净")
+        self.assertEqual(list((self.ws / ".groma" / "assets").glob("asset-*")), [])
+
+    def test_build_default_overwrites_slot_and_skips_same_fingerprint(self) -> None:
+        code, first = self._run_cli("asset", "build", "--title", "K4", "--session",
+                                    "codex:sessions/a.jsonl")
+        self.assertEqual(code, 0)
+        code, again = self._run_cli("asset", "build", "--title", "K4", "--session",
+                                    "codex:sessions/a.jsonl")
+        self.assertEqual(code, 0)
+        self.assertEqual(first["asset_id"], again["asset_id"])
+        self.assertTrue(again.get("unchanged"), "同指纹没提示没变不重铸")
+
+
+class MigrationBaseTests(unittest.TestCase):
+    """迁移基代选择：目录名字母序 ≠ 时间序——基代按
+    当前槽 > reforges 账本最新笔 > generated_at 最新 选，报告写明 base_generation/base_reason。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="wb-u12-")
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.ws = base / "unit"
+        self.ws.mkdir()
+        init_workspace(self.ws, name="基代工作区", owner="tester")
+        (self.ws / "docs").mkdir()
+        (self.ws / "docs" / "note.md").write_text("材料文件正文\n", encoding="utf-8", newline="\n")
+        env = mock.patch.dict(os.environ, {
+            "GROMA_STARTUP_DIR": str(base / "startup"),
+            "GROMA_STATE_DIR": str(base / "state"),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        from lab import topics as topics_mod
+
+        self.unit_id = unitmatch.create_unit("基代主题", self.ws)["unit_id"]
+        topics_mod.create_topic("基代主题")
+
+    def _run_cli(self, *argv: str) -> tuple[int, dict]:
+        import contextlib
+        import io
+
+        from lab import cli as cli_mod
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+            code = cli_mod.main(["--root", str(self.ws)] + list(argv))
+        text = buffer.getvalue()
+        return code, (json.loads(text) if text.strip() else {})
+
+    def _gen(self, name: str, generated_at: str, title: str, claims=None) -> Path:
+        folder = self.ws / ".groma" / "assets" / name
+        folder.mkdir(parents=True)
+        payload = {"schema": 1, "kind": "GROMA_LOCAL_CONTEXT_ASSET", "asset_id": name,
+                   "title": title, "status": "draft", "generated_at": generated_at,
+                   "workspace_name": "基代工作区", "workspace_ref": "wsref",
+                   "unit_id": self.unit_id, "org_path": None, "workspace_count": 1,
+                   "digest": "d", "digest_sha256": "0" * 64, "digests": [],
+                   "totals": {"sessions": 1, "events": 1}, "agents": [], "sessions": [],
+                   "claims": claims or [], "profile": "claim-anchored",
+                   "notes": "", "content_stored": False}
+        (folder / "asset.json").write_text(json.dumps(payload, ensure_ascii=False),
+                                           encoding="utf-8", newline="\n")
+        return folder
+
+    def _material_claim(self, title: str) -> dict:
+        import hashlib
+
+        return {"title": title, "state": "verified",
+                "material": {"locator": {"ref": "docs/note.md"}, "role": "task-spec",
+                             "snapshot_sha256": hashlib.sha256(
+                                 (self.ws / "docs" / "note.md").read_bytes()).hexdigest()}}
+
+    def test_base_is_newest_generated_at_not_alphabetical_last(self) -> None:
+        """①字母序末位=最旧；最新代持唯一 claims → 槽取最新代，base_reason=newest-generated-at。"""
+        # sorted() 升序：0001mid < 1111newest < ff00oldest ⇒ 字母序末位=ff00oldest（最旧）
+        self._gen("asset-0001mid", "2026-11-01T00:00:00Z", "中代")
+        self._gen("asset-ff00oldest", "2026-10-30T00:00:00Z", "旧草稿")
+        self._gen("asset-1111newest", "2026-11-20T00:00:00Z", "服役资产",
+                  claims=[self._material_claim("唯一材料")])
+        self.assertGreater("asset-ff00oldest", "asset-1111newest")
+        code, out = self._run_cli("asset", "migrate-singleton", "--unit", self.unit_id, "--yes")
+        self.assertEqual(code, 0)
+        self.assertEqual(out["base_reason"], "newest-generated-at")
+        self.assertEqual(out["base_generation"], "asset-1111newest")
+        slot = json.loads((self.ws / ".groma" / "assets" / "current" / "asset.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual(slot["asset_id"], "asset-1111newest", "槽取了字母序末位（最旧代）")
+        self.assertEqual(slot["title"], "服役资产")
+        self.assertEqual([c["title"] for c in slot["claims"]], ["唯一材料"])
+        self.assertEqual(list((self.ws / ".groma" / "assets").glob("asset-*")), [])
+
+    def test_reforge_ledger_outranks_generated_at(self) -> None:
+        """②账本最新笔指向非最新 generated_at 的代 → 账本优先，base_reason=reforge-ledger。"""
+        from lab import topics as topics_mod
+
+        self._gen("asset-0001mid", "2026-11-10T00:00:00Z", "账本指向的代")
+        self._gen("asset-1111newest", "2026-11-20T00:00:00Z", "时间最新但账本没写它")
+        ledger = topics_mod._reforges_path()
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(json.dumps({"topic_id": self.unit_id, "asset_id": "asset-0001mid",
+                                      "sessions": 1, "at": "2026-11-10T00:05:00Z"},
+                                     ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+        code, out = self._run_cli("asset", "migrate-singleton", "--unit", self.unit_id, "--yes")
+        self.assertEqual(code, 0)
+        self.assertEqual(out["base_reason"], "reforge-ledger")
+        self.assertEqual(out["base_generation"], "asset-0001mid")
+        slot = json.loads((self.ws / ".groma" / "assets" / "current" / "asset.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual(slot["asset_id"], "asset-0001mid", "账本口径没优先于 generated_at")
 
 
 if __name__ == "__main__":

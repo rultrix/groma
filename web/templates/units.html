@@ -1,13 +1,15 @@
 {% extends "base.html" %}
-{% from "_ui.html" import tip %}
+{% from "_ui.html" import tip, handoff_moment, relay_brief_card %}
 {% block body %}
 <h1>协作主题</h1>
 <div class="muted" style="margin:-8px 0 16px">
-  协作主题是标签，不是视角：本页把本机的协作主题一次列全，管理在各协作主题的详情里。整机数字看<a href="{{ url_for('index') }}">概览</a>，
+  {# 头部句正向化——说「是什么、做什么、去哪做」，不说「不是什么」；
+     实现判据收进 ⓘ 不删。#}
+  协作主题是<b>本机协作的记账单位</b>：本页把协作主题一次列全，管理在各协作主题的详情里。整机数字看<a href="{{ url_for('index') }}">概览</a>，
   选工作区去<a href="{{ url_for('discover_page') }}">发现</a>。<b>不需要 GitHub，也不需要 git remote。</b>
   本页只列<b>你建过的协作主题</b>{{ tip("判据：units.json 里标了人建的，或 topics.json 里已有对应说明行；工作区自带的身份记录不算协作主题——它只在概览「工作区」那一格里计数") }}。
-  {# U1：删掉「（目录里的 groma-unit.json 只是导出件）」——实现细节，用户不据此做动作；
-     这句话没有丢：ARCHITECTURE §2.1 那张存储表里 `groma-unit.json` 的说明就是它（"Unit 身份的导出件（可提交；家目录持有）"）。 #}
+  {# 删掉「（目录里的 groma-unit.json 只是导出件）」——实现细节，用户不据此做动作；
+     这句话没有丢：ARCHITECTURE §2.1 那张存储表里 `groma-unit.json` 的说明就是它（"Unit 身份的导出件（可提交；家目录持有）"）。#}
 </div>
 
 {# 新建卡上移到列表之前；「家」从自由文本改成
@@ -52,21 +54,41 @@
 <div class="card">
   <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start">
     <div>
-      <div style="font-size:16px;font-weight:700">{{ unit.name or block.unit_id }}</div>
-      <div class="muted"><code>{{ block.unit_id }}</code>{% if unit.org_path %} · {{ unit.org_path }}{% endif %}</div>
+      {# 显示名唯一来源 = topics 标签（unit_names 由服务端算好），工程键收进 ⓘ；登记名不再上抬头。 #}
+      <div style="font-size:16px;font-weight:700">{{ block.display_name }}{{ tip("工程键 " ~ block.unit_id ~ "；改名去下面的管理区") }}</div>
+      {% if unit.org_path %}<div class="muted">{{ unit.org_path }}</div>{% endif %}
     </div>
     <div class="muted" style="text-align:right">
       {{ block.rows|length }} 个工作区 · {{ block.assets|length }} 份资产
-      {# 重铸原来 inline 在链路句子里，白底 12px，人认不出它是按钮。
-         现在离开文字流，放在块头右端的动作位上，并给它一个实心底（.reforge）。 #}
-      <span class="block-actions">
-        <form method="post" action="{{ url_for('topic_reforge') }}">
-          <input type="hidden" name="unit" value="{{ block.unit_id }}">
-          <input type="hidden" name="from" value="units">
-          <button type="submit" class="reforge">重铸</button>
-        </form>
-      </span>
+      {# ，units 页「重铸」改「立即重铸」并挪到 hero 下方
+         （屏 8：hero 左下实心按钮）；assets 页块头「重铸」不动。title 提示保留。#}
     </div>
+  </div>
+  {# M3 hero 条：当前生效资产一行说清——是什么/注入比/送达对账/深链。
+     /3：注入源 ≡ 服役资产，注入源卡整体退役、状态由 hero 承载；
+     hero 行末追加次级链接「重新投放」（唯一保留的手工动作，确认页固定服役资产）；
+     无服役资产时空态句（重铸产出后自动投放），不渲染重新投放。#}
+  <div class="scope-bar">
+    {% if block.serving_asset_id %}
+    {% set serving_asset = (block.assets|selectattr("asset_id","equalto",block.serving_asset_id)|list|first) %}
+    <b>当前生效：</b>{{ serving_asset.title if serving_asset else block.serving_asset_id }}
+    （<code>{{ block.serving_asset_id }}</code> · {{ serving_asset.totals.sessions if serving_asset else "？" }} 会话
+    · {% if serving_asset %}{{ serving_asset.generated_at|local_ts }} 重铸{% else %}重铸时刻未知{% endif %}）
+    ｜ 注入 {{ block.chain.serving|length }}/{{ block.rows|length }} 工作区
+    ｜ 送达对账 {% if block.delivery_ok %}✓{% elif block.delivery_ok == false %}✗（有已过期）{% else %}（还没有送达记录）{% endif %}
+    ｜ <a href="{{ url_for('evidence_page', unit=block.unit_id) }}">查看载荷原文</a> · <a href="{{ url_for('unit_inject_confirm', unit=block.unit_id) }}">重新投放</a> · 送达历史见下方各行的投放状态列
+    {% else %}
+    <b>当前生效：</b>未设注入源——重铸产出服役资产后自动投放（跟随机器设置·自动投放到工作区）
+    {% endif %}
+  </div>
+  {# hero 补形状（muted 句）；「立即重铸」挪 hero 下方（屏 8 hero 左下实心按钮）。#}
+  <div class="muted" style="margin-top:4px">注入源 ≡ 服役资产（唯一，无需选择）；无服役资产时这里显示「未设注入源——重铸产出服役资产后自动投放」。</div>
+  <div style="margin-top:8px">
+    <form method="post" action="{{ url_for('topic_reforge') }}">
+      <input type="hidden" name="unit" value="{{ block.unit_id }}">
+      <input type="hidden" name="from" value="units">
+      <button type="submit" class="reforge" title="按主题说明重铸——没变不重铸；别人的资产绝不顶掉">立即重铸</button>
+    </form>
   </div>
   {% if block.chain %}
   <div class="muted" style="margin-top:8px">
@@ -77,10 +99,10 @@
     ｜ <a href="{{ url_for('evidence_page', unit=block.unit_id) }}"><b>{{ block.chain.evidence_count }}</b> 条证据</a>
     {% if not settings.auto_reforge %}<span style="color:#b45309">｜ <b>未传导（自动重铸已关）</b>{{ tip("归类结果不会自己变成资产") }}</span>{% endif %}
     {% if not settings.auto_inject %}<span style="color:#b45309">｜ <b>未投放（自动投放已关）</b>{{ tip("重铸了也不会自己投放到工作区") }}</span>{% endif %}
-    {# U2：两条破折号解释进 ⓘ，状态本体留在可见面。
+    {# 两条破折号解释进 ⓘ，状态本体留在可见面。
        可见的第二句原样是「重铸了也不会自己投放（自动投放已关）」，这里把它压成
        「未投放（自动投放已关）」+浮窗——**契约只钉第一句**（test_theme_page_shows_the_chain_stopped
-       钉「未传导（自动重铸已关）」），第二句没有钉，改名只是文案处置，不是改契约。 #}
+       钉「未传导（自动重铸已关）」），第二句没有钉，改名只是文案处置，不是改契约。#}
     {% if block.chain.serving|length < block.rows|length %}<span style="color:#b45309">—— 还有工作区没在跑本协作主题的资产</span>{% endif %}
   </div>
   {% endif %}
@@ -89,15 +111,315 @@
   {% if block.detect_error %}<div class="err" style="margin-top:10px">{{ block.detect_error }}</div>{% endif %}
   {% if block.lost %}<div class="muted" style="margin-top:6px"><b style="color:#b45309">失联工作区：</b>{% for path in block.lost %}<code>{{ path }}</code>{% if not loop.last %}、{% endif %}{% endfor %}——登记行还在，目录已不存在；下面的「删除这个协作主题」会一并清掉这些行。</div>{% endif %}
 
+  {# 接力卡升一级——棒位状态条 + 角色表卡 + 时刻区 + 预览/历史折面，
+     一张卡落主题卡 hero 下方（屏 5+屏 6 合并形状）；POST /units/pipeline 等路由不动。#}
+  <div class="card" style="margin-top:12px;border-left:4px solid var(--teal)">
+    <div style="font-weight:700;margin-bottom:8px">接力 <span class="muted" style="font-weight:400">主题资产管「地图」，接力简报管「换棒那一刻」——两个产物，同一套铸造与投放设施</span></div>
+    {# 棒位状态条 → 三站 .pipe 盒（屏 6）：who=持站 harness（角色表反查，未配=—），
+       what=已完成 ✓ / 棒位 · 下一棒 / 未开始；数据只从 derive_baton+角色表来（不造文件/时刻）。
+       未配表退化=现状引导句（见过的 harness chips 保留）。#}
+    {% if block.stations %}
+    <div class="pipe-row">
+      {% for st in block.stations %}
+      <div class="pipe{% if st.state == "棒位" %} current{% endif %}">
+        {% if st.state == "棒位" %}<span class="pipe-badge">棒位</span>{% endif %}
+        <div class="who">{{ st.who }} · {{ st.station }}</div>
+        <div class="what">{% if st.state == "已完成" %}已完成 ✓
+          {% elif st.state == "棒位" %}棒位 · 下一棒 {{ st.who }}
+          {% else %}未开始{% endif %}</div>
+      </div>
+      {% if not loop.last %}<span class="pipe-arrow">→</span>{% endif %}
+      {% endfor %}
+    </div>
+    {% if block.baton.enabled and not block.baton.mapped %}
+    <div class="scope-bar">棒位推不出：最近会话 harness <code>{{ block.baton.latest_harness or "？" }}</code> 不在表里（诚实账，不猜）</div>
+    {% endif %}
+    {% else %}
+    <div class="scope-bar">
+      接力：未启用——三站流水线（任务书→施工→验收），在下面配一张角色表即可
+      {% if block.harnesses %}｜ 见过的 harness：{% for h in block.harnesses %}<span class="badge off">{{ h }}</span> {% endfor %}{% endif %}
+    </div>
+    {% endif %}
+
+    {# 下一棒 health 行：[现在就铸] 仅 pending 时渲染（零伪造），[设置…] 锚到角色表折面。
+       （屏6 门控放宽）：mapped 即渲染；下一站无持棒 → 诚实变体句，不整段消失。#}
+    {% if block.next_info %}
+    {% if block.next_info.harness %}
+    <div class="scope-bar" style="margin-bottom:10px">
+      下一棒：<b>{{ block.next_info.harness }}</b> · 将收到 {{ block.next_info.role }}简报 · 投给 {{ block.next_info.harness }} 的 {{ block.next_info.faces }}
+      ｜ 触发：digest 检出上一会话 harness → 新会话 harness
+      {% if block.next_info.pending %} ｜ <a href="{{ url_for('units_handoff_preview', path=block.handoff.path) }}">[现在就铸]</a>{% endif %}
+      ｜ <a href="#pipeline-roles">[设置…]</a>
+    </div>
+    {% else %}
+    <div class="scope-bar" style="margin-bottom:10px">
+      下一棒：<b>{{ block.next_info.role }}</b>（站）· 还没人持棒——在下面角色表给「{{ block.next_info.role }}」指派 harness，触发时简报才知道投给谁
+      ｜ 触发：digest 检出上一会话 harness → 新会话 harness
+      ｜ <a href="#pipeline-roles">[设置…]</a>
+    </div>
+    {% endif %}
+    {# 投影预告句（muted 一行）。#}
+    <div class="muted" style="margin-bottom:10px">验收阶段自动换投影：验收视角载荷以「施工产出/偏差」开头，任务书退为引用行——同一份资产，两副眼镜。</div>
+    {# 推导现读行（mapped 时渲染）；持棒位缺显 —（不造假）。#}
+    {% if block.baton.mapped %}
+    <div class="muted" style="margin-bottom:10px">推导现读：最近会话 <b>{{ block.baton.latest_harness }}</b>（{{ block.baton.completed_station }} 完成）⇒ 下一站 <b>{{ block.baton.next_station }}</b> ⇒ 持棒 <b>{{ block.next_info.harness or "—" }}</b>{% if block.next_info.harness %} ⇒ 触发时简报投给 {{ block.next_info.harness }} 的 {{ block.next_info.faces }}{% endif %} ｜ 全程零推断、零额度</div>
+    {% endif %}
+    {% endif %}
+
+    {# 角色表展示态（屏 6）：badges 常驻 + 行尾 [改]/[指派…] 开 details 内嵌原 select 表单
+       （POST 路由/字段原样，零 JS）。「恢复默认」不实现（人工配一次、无默认表）。#}
+    <details style="margin-top:10px" id="pipeline-roles">
+      <summary class="muted" style="cursor:pointer">流水线角色表{% if block.pipeline %}（已配 {{ block.pipeline.roles|length }} 张映射）{% else %}（未配：角色接力不启用）{% endif %}</summary>
+      <div class="muted" style="margin:6px 0 10px">
+        角色是<b>工作流</b>的属性，不是 harness 的属性——codex 也能施工、qoder 也能出任务书，所以映射由人配。
+        顺序即流水线：任务书 → 施工 → 验收（第一期固定这三站；要加站另立）。
+      </div>
+      <table>
+        <tr><th>harness</th><th>在本流水线里的角色</th><th style="width:70px"></th></tr>
+        {% for h in block.harnesses %}
+        {% set current = (block.pipeline.roles.get(h) if block.pipeline else none) or "" %}
+        <tr>
+          <td><strong>{{ h }}</strong></td>
+          <td>{% if current %}<span class="badge violet">{{ current }}</span>{% else %}<span class="muted">未参与本流水线</span>{% endif %}</td>
+          <td>
+            <details>
+              <summary class="muted" style="cursor:pointer;display:inline">{% if current %}[改]{% else %}[指派…]{% endif %}</summary>
+              <form method="post" action="{{ url_for('units_pipeline') }}" style="margin-top:6px">
+                <input type="hidden" name="unit" value="{{ block.unit_id }}">
+                <select name="role_{{ h }}" style="padding:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+                  <option value="">未参与本流水线</option>
+                  {% for station in ("任务书", "施工", "验收") %}
+                  <option value="{{ station }}"{% if current == station %} selected{% endif %}>{{ station }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="ghost">保存</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not block.harnesses %}<tr><td colspan="3" class="muted">本协作主题还没有采到任何会话——先采集，再来配表。</td></tr>{% endif %}
+      </table>
+    </details>
+
+    {# 棒上的 claims 卡（屏 6 引用两型同框）：服役资产 claims 三列（claim/引用/核对，
+       徽标映射现算）；表尾两路径按钮 + 护栏句；无 claims=空态。GET 现算。#}
+    <div style="margin-top:12px;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px">
+      <div style="font-weight:700">棒上的 claims<span class="badge violet" style="margin-left:8px">引用两型同框</span></div>
+      {% if block.claims_rows %}
+      <table style="margin-top:6px">
+        <tr><th style="width:44%">claim</th><th>引用</th><th style="width:150px">核对</th></tr>
+        {% for c in block.claims_rows %}
+        <tr>
+          <td>{{ c.title }}</td>
+          <td>{% if c.kind == "活引用" %}<span class="badge violet">活引用</span> <code>{{ c.ref }}</code>{% if c.role %}（role: {{ c.role }}）{% endif %}
+              {% else %}<span class="badge on">冻结引文</span> <code>{{ c.ref }}</code>{% if c.sha %} · sha {{ c.sha }}{% endif %}{% if c.at %} · {{ c.at|local_ts }}{% endif %}{% endif %}</td>
+          <td>{% if c.ok %}<span class="badge on">{{ c.check }}</span>
+              {% else %}<span class="badge off">{{ c.check }}</span>{% if c.drift %}<div class="muted">读最新版即可；重铸刷新快照</div>{% endif %}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="muted" style="margin-top:6px">这份资产还没有 claims。</div>
+      {% endif %}
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <a class="ghost" style="border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13px;color:var(--ink);text-decoration:none"
+           href="{{ url_for('evidence_page', unit=block.unit_id) }}">去会话详情选段引用</a>
+        <a class="ghost" style="border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13px;color:var(--ink);text-decoration:none"
+           href="{{ url_for('assets_page') }}">引用材料文件…</a>
+        <span class="muted">两条添加路径：落锚前整批核对，失败一个字节不改</span>
+      </div>
+    </div>
+
+    {# 时刻区三态：pending → 时刻卡（检测到换 harness 句式
+       + 触发判据行 + 主按钮「按最近 5 会话铸简报」；直投「现在投」从时刻卡退场，投递只留在预览页；
+       「忽略这一次」ghost 保留）；observed → 最近一条历史棒；全无 → 空态卡。#}
+    {% if block.handoff %}
+    <div style="margin-top:10px">{{ handoff_moment(block.handoff, url_for('units_handoff_ignore')) }}</div>
+    {% elif block.observed_latest %}
+    <div class="muted" style="margin-top:10px">
+      最近一条历史棒：<code>{{ block.observed_latest.from_harness or "？" }} → {{ block.observed_latest.to_harness or "？" }}</code>
+      · {{ block.observed_latest.at|local_ts }} · <b>历史棒 · 自动入账不投</b>
+      {{ tip("回放只入账不投递：「现在投 / 忽略这一次」只属于真实检出的接力时刻") }}
+    </div>
+    {% else %}
+    {# 空态句（屏 5 形状）：streak/历史棒信息降为 muted 第二行，不删。#}
+    <div class="muted" style="margin-top:10px">
+      本协作主题暂无待处理的接力时机。规则：新 harness 首会话 / 角色切换出现时，铸对应类型的简报并只投给接棒的一侧。
+      {% if block.latest_member %}
+      <div style="margin-top:4px">还没发生过换棒——本工作区最近 {{ block.latest_member.streak }} 场都是同一 harness <code>{{ block.latest_member.source or "？" }}</code>。</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# 简报预览折面：结构化 payload 卡，与 handoff.html 同一宏同一形状；
+       按当前窗口现算，GET 零写入；不重建历史时刻的窗口。#}
+    {% if block.relay_preview %}
+    <details style="margin-top:8px">
+      <summary class="muted" style="cursor:pointer">预览简报</summary>
+      <div class="muted" style="margin-top:6px">按当前窗口现算（历史时刻没存窗口快照，不重建——如实）。预览对象：<code>{{ block.relay_preview.path }}</code></div>
+      {{ relay_brief_card(block.relay_preview) }}
+    </details>
+    {% endif %}
+
+    {# 简报历史折面（屏 5 对齐）：升四列表格「时刻/交接/简报/送达」；
+       简报列=无窗口快照如实显「—」（③，不重建不造数）。#}
+    {% if block.handoff_history %}
+    <details style="margin-top:8px">
+      <summary class="muted" style="cursor:pointer">简报历史（{{ block.handoff_history|length }} 笔）</summary>
+      <table style="margin-top:8px">
+        <tr><th>时刻</th><th>交接</th><th>简报</th><th>送达</th></tr>
+        {% for item in block.handoff_history %}
+        <tr>
+          <td class="muted">{{ item.recorded_at|local_ts }}</td>
+          <td><code>{{ item.from_harness or "？" }} → {{ item.to_harness or "？" }}</code></td>
+          <td class="muted">—</td>
+          <td>{% if item.status == "delivered" %}<span class="badge on">已投 ✓</span>
+              {% elif item.status == "ignored" %}<span class="badge off">已忽略</span>
+              {% elif item.status == "observed" %}<span class="badge off">历史棒</span>
+              {% else %}<span class="badge off">待投</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+  </div>
+
+  {# 屏 8：工作区表 5→4 列 成员工作区/装载面/投递状态/投放；
+     授权人/信号、会话/事件、来源 chips 全部降为本格 muted 次级行（信息不删）；
+     「注册 Qoder hook」挪到投递状态格（它描述的就是送达通道）；暂停/恢复一级按钮，
+     其余收「更多 ▾」；POST 路由全部原样。#}
+  <table style="margin-top:12px">
+    <tr><th style="width:30%">成员工作区</th><th style="width:16%">装载面</th><th style="width:34%">投递状态</th><th style="width:20%">投放</th></tr>
+    {% for r in block.rows %}
+    {% set inj = block.injection.get(r.path) or {} %}
+    <tr>
+      <td>
+        <strong>{{ r.name }}</strong>
+        {% if r.is_home %}<span class="badge on">家</span>
+        {% elif r.membership %}<span class="badge violet">{{ r.membership.role }}</span>
+        {% else %}<span class="muted">未并入</span>{% endif %}
+        <br><code>{{ r.path }}</code>
+        <div class="muted" style="margin-top:2px">
+          {% if r.membership and r.membership.authorized_by %}{{ r.membership.authorized_by }} · {{ r.membership.created_at|local_date }} · {{ r.membership.signal }}<br>{% endif %}
+          {% if r.sessions is none %}未采集{% else %}{{ r.sessions }} / {{ r.events }}{% endif %}
+          {% if r.sources %} · 采集根：{% for s in r.sources %}<span class="badge off">{{ s }}</span> {% endfor %}
+          {% elif not r.initialised %} · 还没初始化
+          {% else %} · <span class="badge off">未声明采集根</span>{% endif %}
+          {% if r.sessions == 0 and r.outside_cwds %}
+          <div style="margin-top:2px">不是坏了：这些会话的 cwd 记在别处——
+            {% for c in r.outside_cwds[:3] %}<code>{{ c.name }}</code> {{ c.sessions }} 条{{ "、" if not loop.last }}{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </td>
+      <td>
+        {% if not inj.state or inj.state == 'off' %}<span class="muted">未注入</span>
+        {# faces_display 现含 hook 通道——faces 空但有已注册 hook 也要显串，不是「—」。#}
+        {% elif block.faces_display.get(r.path) %}<span class="muted">{{ block.faces_display.get(r.path) }}</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td style="word-break:break-all">
+        {% if not inj.state or inj.state == 'off' %}<span class="muted">未注入</span>
+        {% elif inj.state == 'paused' %}<span class="badge off">已停发</span>
+        {% elif not inj.serving %}<span class="badge off">载荷就绪 · 无装载面</span>
+        {% elif inj.state == 'stale' %}<span class="badge off">投放中 · 偏旧</span>
+        {% else %}<span class="badge on">投放中</span>{% endif %}
+        {# A1 的对账三态上界面（Q4 平铺）：match=送达的就是当前载荷；stale=夜链重写过、收到的已过期。
+           数据来自 injection_summary 的 delivery 字段，模板只挑形状不重算。 #}
+        {% if inj.delivery %}
+        {% if inj.delivery.state == 'match' %}<span class="badge on">送达=当前</span>
+        {% elif inj.delivery.state == 'stale' %}<span class="badge off">送达已过期</span>
+        {% elif inj.delivery.state == 'none' %}<span class="badge off">从未送达</span>
+        {% endif %}
+        {% endif %}
+        {% if inj.asset_id %}
+        <div class="muted" style="margin-top:2px">{{ inj.title }} · {{ inj.asset_id }}</div>
+        {% endif %}
+        {% if inj.reason %}<div class="muted" style="margin-top:2px">{{ inj.reason }}</div>{% endif %}
+        {% if inj.asset_id and not inj.hook_registered %}
+        <form method="post" action="{{ url_for('unit_inject_hook') }}" style="margin-top:4px">
+          <input type="hidden" name="path" value="{{ r.path }}">
+          <input type="hidden" name="confirm" value="1">
+          <button type="submit" class="ghost">注册 Qoder hook</button>
+          <span class="muted">写 <code>.qoder/hooks/groma_inject.py</code> ＋ 注册（首次需你确认）</span>
+        </form>
+        {% endif %}
+        {% if inj.last_delivery %}
+        <div class="muted" style="margin-top:2px">
+          {{ inj.last_delivery.at|local_ts }} · sha <code>{{ (inj.last_delivery.sha256 or '')[:8] }}</code> · {{ inj.last_delivery.event }}
+        </div>
+        {% endif %}
+      </td>
+      <td style="white-space:nowrap">
+        {% if inj.asset_id and inj.state != 'paused' %}
+        <form method="post" action="{{ url_for('unit_inject_stop') }}" style="display:inline">
+          <input type="hidden" name="path" value="{{ r.path }}">
+          <input type="hidden" name="unit" value="{{ block.unit_id }}">
+          <button type="submit" class="ghost">暂停此区</button>
+        </form>
+        {% endif %}
+        {% if inj.state == 'paused' %}
+        <form method="post" action="{{ url_for('unit_inject_resume') }}" style="display:inline">
+          <input type="hidden" name="path" value="{{ r.path }}">
+          <input type="hidden" name="unit" value="{{ block.unit_id }}">
+          <button type="submit" class="ghost">恢复投递</button>
+        </form>
+        {% endif %}
+        {% if inj.asset_id %}
+        <form method="post" action="{{ url_for('unit_inject_refresh') }}" style="display:inline">
+          <input type="hidden" name="path" value="{{ r.path }}">
+          <button type="submit" class="ghost">刷新载荷</button>
+        </form>
+        {% endif %}
+        {# F12 分级不变：低频/不可逆动作收进「更多 ▾」（设为家也入内）；确认页路由不变。 #}
+        {% if inj.asset_id or inj.hook_registered or r.membership or not r.is_home %}
+        <details style="display:inline-block;margin-left:6px">
+          <summary class="muted" style="cursor:pointer;display:inline">更多 ▾</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;min-width:220px;background:#fff">
+            {% if inj.hook_registered %}
+            <form method="post" action="{{ url_for('unit_inject_hook') }}">
+              <input type="hidden" name="path" value="{{ r.path }}">
+              <input type="hidden" name="off" value="1">
+              <button type="submit" class="ghost">摘除 hook</button>
+            </form>
+            {% endif %}
+            {% if not r.is_home %}
+            <form method="post" action="{{ url_for('unit_home') }}">
+              <input type="hidden" name="unit" value="{{ block.unit_id }}">
+              <input type="hidden" name="path" value="{{ r.path }}">
+              <button type="submit" class="ghost">设为家</button>
+            </form>
+            {% endif %}
+            {% if r.membership %}
+            <form method="post" action="{{ url_for('units_leave') }}">
+              <input type="hidden" name="unit" value="{{ block.unit_id }}">
+              <input type="hidden" name="path" value="{{ r.path }}">
+              <button type="submit" class="ghost">移出协作主题</button>
+            </form>
+            {% endif %}
+            <a href="{{ url_for('workspace_remove_page', path=r.path) }}" style="color:var(--red);font-size:13px">从本机移除</a>
+          </div>
+        </details>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not block.rows %}<tr><td colspan="4" class="muted">这个协作主题还没有本机工作区。</td></tr>{% endif %}
+  </table>
+  {# 表尾 footnote（屏 8 形状）。#}
+  <div class="muted" style="margin-top:8px">重铸后自动投全体成员（除非某区被暂停）；载荷按各区的 harness 现算投影。「重新投放」= 唯一保留的手工动作（覆盖自动投放关闭、新成员加入），一次确认卡（固定服役资产 · 写哪些区、哪些面、sha 变化）。</div>
+
   <details style="margin-top:10px">
-    <summary class="muted" style="cursor:pointer">展开管理（改名 · 说明 · 工作区 · 注入）</summary>
+    <summary class="muted" style="cursor:pointer">展开管理（家 · 改名 · 说明 · 可并入）</summary>
 
     <div class="muted" style="margin-top:8px">家 <code>{{ block.home or "（没有家）" }}</code>{% if block.info and block.info.branch %} ｜ 分支 {{ block.info.branch }}{% endif %}</div>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
       <form method="post" action="{{ url_for('units_rename') }}" style="display:flex;gap:6px;align-items:center">
         <input type="hidden" name="unit" value="{{ block.unit_id }}">
-        <input name="name" value="{{ unit.name or '' }}" placeholder="协作主题名称，例如「ACPE 采集改造」"
+        {# 预填=显示名（topics 标签，M4 唯一来源）——「用户看到的名字」就是输入框里的名字。原值 unit.name（登记名）。#}
+        <input name="name" value="{{ block.display_name or '' }}" placeholder="协作主题名称，例如「ACPE 采集改造」"
                style="min-width:240px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
         <button type="submit">改名</button>
       </form>
@@ -115,116 +437,29 @@
       <input name="intent" value="{{ (block.topic.intent if block.topic else '') or '' }}"
              placeholder="包含什么、明确不含什么"
              style="flex:1;min-width:320px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
-      {# U8：placeholder 里那半句「——这是归类判据，不是简介；不进任何导出物」移出输入框，
-         框内只留"该写什么"。判据身份与"不进导出物"进 ⓘ（同一条 tip 宏，读屏与键盘都够得到）。 #}
+      {# placeholder 里那半句「——这是归类判据，不是简介；不进任何导出物」移出输入框，
+         框内只留"该写什么"。判据身份与"不进导出物"进 ⓘ（同一条 tip 宏，读屏与键盘都够得到）。#}
       {{ tip("这是归类判据，不是简介；不进任何导出物") }}
       <button type="submit" class="ghost">保存说明</button>
     </form>
     <div class="muted" style="margin-top:4px">
       改说明只影响<b>下一次</b>归类，已入选的会话不会被重判；清空即删除判据。
-      {# U4：删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
+      {# 删掉「（实测同一批候选：只给主题名 0 条，加一句说明 6 条）」。
          那是我们做这条判断时的论据，不是用户当下能核对或据以决定的东西；论据留在这里当代码注释。
          被钉的仍是前半句（test_an_empty_intent_is_announced_as_a_degradation）——
-         这条把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。 #}
+         这条把「没有说明时自动归类会退化。」搬到摘要面了，它不许跟着这段进 details。#}
     </div>
 
-    <table style="margin-top:12px">
-      <tr><th style="width:22%">工作区</th><th style="width:11%">身份</th><th style="width:9%">会话 / 事件</th><th style="width:11%">采集</th><th style="width:30%">注入</th><th style="width:17%"></th></tr>
-      {% for r in block.rows %}
-      {% set inj = block.injection.get(r.path) or {} %}
-      <tr>
-        <td><strong>{{ r.name }}</strong><br><code>{{ r.path }}</code></td>
-        <td>
-          {% if r.is_home %}<span class="badge on">家</span>
-          {% elif r.membership %}<span class="badge off">{{ r.membership.role }} · {{ r.membership.signal }}</span>
-          {% else %}<span class="muted">未并入</span>{% endif %}
-          {% if r.membership and r.membership.authorized_by %}
-          <div class="muted" style="margin-top:2px">{{ r.membership.authorized_by }} · {{ r.membership.created_at|local_date }}</div>
-          {% endif %}
-        </td>
-        <td>
-          {% if r.sessions is none %}<span class="muted">未采集</span>
-          {% else %}{{ r.sessions }} / {{ r.events }}{% endif %}
-          {% if r.sessions == 0 and r.outside_cwds %}
-          <div class="muted" style="margin-top:4px">
-            不是坏了：这些会话的 cwd 记在别处——
-            {% for c in r.outside_cwds[:3] %}<code>{{ c.name }}</code> {{ c.sessions }} 条{{ "、" if not loop.last }}{% endfor %}
-          </div>
-          {% endif %}
-        </td>
-        <td>
-          {% if not r.initialised %}<span class="muted">还没初始化</span>
-          {% elif r.sources %}{% for s in r.sources %}<span class="badge off">{{ s }}</span> {% endfor %}
-          {% else %}<span class="badge off">未声明采集根</span>{% endif %}
-        </td>
-        <td style="word-break:break-all">
-          {% if not inj.state or inj.state == 'off' %}<span class="muted">未注入</span>
-          {% elif inj.state == 'paused' %}<span class="badge off">已停发</span>
-          {% elif not inj.serving %}<span class="badge off">载荷就绪 · 无装载面</span>
-          {% elif inj.state == 'stale' %}<span class="badge off">投放中 · 偏旧</span>
-          {% else %}<span class="badge on">投放中</span>{% endif %}
-          {% if inj.asset_id %}
-          <div class="muted" style="margin-top:2px">{{ inj.title }}<br>{{ inj.asset_id }}</div>
-          {% endif %}
-          {% if inj.reason %}<div class="muted" style="margin-top:2px">{{ inj.reason }}</div>{% endif %}
-          {% if inj.asset_id and not inj.hook_registered %}
-          <form method="post" action="{{ url_for('unit_inject_hook') }}" style="margin-top:4px">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <input type="hidden" name="confirm" value="1">
-            <button type="submit" class="ghost">注册 Qoder hook</button>
-            <span class="muted">写 <code>.qoder/hooks/groma_inject.py</code> ＋ 注册（首次需你确认）</span>
-          </form>
-          {% elif inj.hook_registered %}
-          <form method="post" action="{{ url_for('unit_inject_hook') }}" style="margin-top:4px;display:inline">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <input type="hidden" name="off" value="1">
-            <button type="submit" class="ghost">摘除 hook</button>
-          </form>
-          {% endif %}
-          {% if inj.last_delivery %}
-          <div class="muted" style="margin-top:2px">
-            上次送达 {{ inj.last_delivery.at|local_ts }} · {{ inj.last_delivery.chars }} 字
-            · sha <code>{{ (inj.last_delivery.sha256 or '')[:8] }}</code> · {{ inj.last_delivery.event }}
-          </div>
-          {% endif %}
-          {% if inj.faces and inj.faces|length %}<div class="muted">块面：{{ inj.faces|join('、') }}</div>{% endif %}
-        </td>
-        <td style="white-space:nowrap">
-          {% if not r.is_home %}
-          <form method="post" action="{{ url_for('unit_home') }}" style="display:inline">
-            <input type="hidden" name="unit" value="{{ block.unit_id }}">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <button type="submit" class="ghost">设为家</button>
-          </form>
-          {% endif %}
-          {% if inj.asset_id %}
-          <form method="post" action="{{ url_for('unit_inject_refresh') }}" style="display:inline">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <button type="submit" class="ghost">刷新载荷</button>
-          </form>
-          <form method="post" action="{{ url_for('unit_inject_stop') }}" style="display:inline">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <button type="submit" class="ghost">停发</button>
-          </form>
-          {% endif %}
-          {% if r.membership %}
-          <form method="post" action="{{ url_for('units_leave') }}" style="display:inline">
-            <input type="hidden" name="unit" value="{{ block.unit_id }}">
-            <input type="hidden" name="path" value="{{ r.path }}">
-            <button type="submit" class="ghost">移出协作主题</button>
-          </form>
-          {% endif %}
-          <a href="{{ url_for('workspace_remove_page', path=r.path) }}" style="margin-left:8px;color:var(--red);font-size:13px">从本机移除</a>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if not block.rows %}<tr><td colspan="6" class="muted">这个协作主题还没有本机工作区。</td></tr>{% endif %}
-    </table>
+    {# 角色表卡与接力时刻/历史整体上移到上方「接力」卡（管理区瘦身，
+       摘要句随之去掉「角色表」）。原版式。#}
+
+    {# 注入源卡整体退役（select+「注入到这里」）——注入源 ≡ 服役资产，
+       状态由 hero 承载，唯一手工动作=hero 行末「重新投放」。#}
 
     {# 挂主题的口子从发现页搬到这里——**block 就是主题**，所以每行一个 form、
-       hidden unit 恒等于本 block 的 unit_id，不放 `<select>`（裁定 4②）。
+       hidden unit 恒等于本 block 的 unit_id，不放 `<select>`。
        这一块的形状由 `test_the_theme_page_offers_joining_each_registered_outsider` 按"每个实例"逐 form 判，
-       发现页那边由 `test_discover_no_longer_offers_joining_a_theme` 钉它不再出现。 #}
+       发现页那边由 `test_discover_no_longer_offers_joining_a_theme` 钉它不再出现。#}
     {% if block.others %}
     <div class="muted" style="margin:14px 0 4px"><b>可并入这个协作主题的工作区</b></div>
     <table>
@@ -247,24 +482,6 @@
     </table>
     {% endif %}
 
-    {% if block.assets %}
-    <form method="post" action="{{ url_for('unit_inject_apply') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">
-      <input type="hidden" name="unit" value="{{ block.unit_id }}">
-      <span class="muted">把某份资产设为注入源：</span>
-      <select name="asset_id" style="padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-width:340px">
-        {% for a in block.assets %}
-        <option value="{{ a.asset_id }}">{{ a.title }}（{{ a.totals.sessions }} 会话 · {{ a.generated_at|local_date }}）</option>
-        {% endfor %}
-      </select>
-      <select name="path" style="padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-width:280px">
-        {% for r in block.rows %}<option value="{{ r.path }}"{% if r.is_home %} selected{% endif %}>{{ r.name }}{% if r.is_home %} ｜家{% endif %}</option>{% endfor %}
-      </select>
-      <label class="muted" style="display:flex;gap:4px;align-items:center">
-        <input type="checkbox" name="all" value="1"> 本协作主题全部工作区
-      </label>
-      <button type="submit">注入到这里</button>
-    </form>
-    {% endif %}
 
     {# 删主题的入口挂在**每个 block 自己**的详情里，带上本 block 的 unit_id（不做下拉、不混选择）。
        从抬头移进详情，不再常驻可见面；红色分级属机会点 3，本轮不做。 #}

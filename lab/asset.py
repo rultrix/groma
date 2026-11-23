@@ -15,6 +15,9 @@ from .state import workspace_ref
 from .workspace import LabError, load_unit, meta_dir, read_json, utc_stamp, write_json
 
 ASSETS_DIR = "assets"
+# 单槽——一个协作主题恒只保留一份四件套，固定槽 assets/current/，
+# 旧 asset-<id> 多代目录机制退役（历史代由 migrate-singleton 收编，K4）。
+CURRENT_SLOT = "current"
 
 
 def _sha256(path: Path) -> str:
@@ -79,6 +82,11 @@ def _render_readme(asset: dict) -> str:
         ]
         for claim in asset["claims"]:
             state = "已核对" if claim.get("state") == "verified" else "未核对（stale）"
+            if claim.get("material") and not claim.get("quote"):
+                # 材料活引用：README 只列指针出处，不搬正文
+                ref = ((claim.get("material") or {}).get("locator") or {}).get("ref") or "？"
+                lines.append("- %s ｜ %s ｜ 材料 `%s`" % (claim["title"], state, ref))
+                continue
             lines.append("- %s ｜ %s ｜ %s → %s ｜ sha256 `%s`"
                          % (claim["title"], state, claim["from_ts"], claim["to_ts"],
                             claim["quote_sha256"][:12]))
@@ -110,6 +118,12 @@ def _render_validation(asset: dict) -> str:
     if asset.get("claims"):
         lines += ["", "## 锚点核对", ""]
         for claim in asset["claims"]:
+            if claim.get("material") and not claim.get("quote"):
+                # 材料活引用：核对口径是文件指纹（诚实账），不是会话锚点
+                ref = ((claim.get("material") or {}).get("locator") or {}).get("ref") or "？"
+                lines.append("- ✅ 材料 `%s`（快照指纹 `%s…`）"
+                             % (ref, (claim["material"].get("snapshot_sha256") or "")[:12]))
+                continue
             if claim.get("state") == "verified":
                 lines.append("- ✅ `%s` %s → %s（sha256 `%s`）"
                              % (claim["session_key"], claim["from_ts"], claim["to_ts"],
@@ -129,7 +143,46 @@ def _render_validation(asset: dict) -> str:
     return "\n".join(lines)
 
 
-def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: str = "") -> dict:
+def _inherit_claims(prev: dict | None, root: Path) -> tuple[list[dict], dict[str, int]]:
+    """claims 跨代继承——实质重铸覆写单槽前，把上一份资产的 claims
+    逐条核对带入：冻结引文对 vault 会话分片 sha、材料活引用对文件指纹（现成核对件）。
+    可核对的写入新四件套；失效的按原因分桶计数（诚实账，不静默丢）。
+    无上一份资产（首次重铸）= 空继承。
+    """
+    from . import anchors, vault as vault_mod
+
+    skipped: dict[str, int] = {}
+    carried: list[dict] = []
+    for claim in (prev or {}).get("claims") or []:
+        material = claim.get("material")
+        if material and not claim.get("quote"):
+            ref = ((material.get("locator") or {}).get("ref") or "")
+            expected = material.get("snapshot_sha256")
+            try:
+                snapshot = anchors.material_snapshot(Path(root), ref)
+            except LabError:
+                skipped["material_missing"] = skipped.get("material_missing", 0) + 1
+                continue
+            if snapshot != expected:
+                skipped["material_drift"] = skipped.get("material_drift", 0) + 1
+                continue
+            carried.append(claim)
+            continue
+        try:
+            found = anchors.locate(vault_mod.vault_root(), claim.get("session_key") or "",
+                                   claim.get("from_ts") or "", claim.get("to_ts") or "")
+        except LabError:
+            skipped["quote_missing"] = skipped.get("quote_missing", 0) + 1
+            continue
+        if found.get("quote_sha256") != claim.get("quote_sha256"):
+            skipped["quote_stale"] = skipped.get("quote_stale", 0) + 1
+            continue
+        carried.append(dict(claim, state="verified", stale_reason=None))
+    return carried, skipped
+
+
+def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: str = "",
+                dry_run: bool = False) -> dict:
     """Cite sessions from anywhere in the Unit, but write the asset locally."""
     unit = load_unit(root)
     label = (title or "").strip()
@@ -216,9 +269,35 @@ def build_asset(root: Path, title: str, selection: list[tuple[str, str]], note: 
         "notes": note or "",
     }
 
-    target = meta_dir(root) / ASSETS_DIR / asset_id
+    # 写固定槽；写前比对指纹——新算指纹与当前槽 asset.json.asset_id 相等
+    # → 「没变不重铸」，不写盘、不追加账本（调用方按 reason 提示）。
+    # CLI --check：算指纹+依据摘要后即返回，不写盘、不进账本。
+    if dry_run:
+        return {"planned": True, "asset_id": asset_id, "title": label,
+                "sessions": len(sessions), "digest": asset["digest"],
+                "selection": [[source, path] for source, path in keys]}
+    target = current_asset_dir(root, unit.get("unit_id"))
+    existing = target / "asset.json"
+    prev = None
+    if existing.is_file():
+        try:
+            prev = read_json(existing)
+        except ValueError:
+            prev = None
+        if prev and prev.get("asset_id") == asset_id:
+            out = dict(prev)
+            out["unchanged"] = True
+            out["reason"] = "没变不重铸（指纹同）"
+            return out
+    # 覆写前核对继承上一份资产的 claims（首次重铸=空继承）。
+    carried, skipped_claims = _inherit_claims(prev, root)
+    if carried:
+        asset["claims"] = carried
+        asset["profile"] = "claim-anchored"
     target.mkdir(parents=True, exist_ok=True)
     _write_folder(target, asset)
+    asset["inherited_claims"] = len(carried)
+    asset["skipped_claims"] = skipped_claims
     return asset
 
 
@@ -235,17 +314,40 @@ def _write_folder(folder: Path, asset: dict) -> None:
     write_json(folder / "manifest.json", {"schema": 1, "asset_id": asset["asset_id"], "files": files})
 
 
+def current_asset_dir(root: Path, unit_id: str | None = None) -> Path:
+    """单槽读取件：恒 <家>/.groma/assets/current/。
+
+    `unit_id` 给了就按协作主题的家定位；不给才按 `root` 自己的 Unit 家——
+    与 find_asset 的旧口径同一句话：成员区自带卡时这两种口径不是同一个集合。
+    """
+    home = None
+    if unit_id:
+        home = unitmatch.home_path(unit_id)
+    if home is None:
+        try:
+            unit = load_unit(root)
+            home = unitmatch.home_path(unit.get("unit_id"))
+        except (LabError, OSError, ValueError):
+            home = None
+    base = meta_dir(Path(home)) if home else meta_dir(Path(root))
+    return base / ASSETS_DIR / CURRENT_SLOT
+
+
 def find_asset(root: Path, asset_id: str, unit_id: str | None = None) -> Path | None:
     """The folder of an asset inside this Unit, whichever workspace built it.
 
-    `unit_id` 是"正在操作的协作主题"。给了就按它的成员集找，不给才退回
-    `root` 自己的卡片——成员区自带一张卡时，这两种口径不是同一个集合。
+    单槽语义：`asset_id` 已从目录身份降为内容指纹——当前槽里的 asset.json
+    指纹等于要找的 id 才算找到；找不到不再翻 asset-<id> 多代目录（已退役）。
     """
-    roots = unitmatch.scope_workspaces(root, unit_id)
-    for folder in unitmatch.asset_dirs_for(roots):
-        if folder.name == asset_id and (folder / "asset.json").is_file():
-            return folder
-    return None
+    slot = current_asset_dir(root, unit_id)
+    path = slot / "asset.json"
+    if not path.is_file():
+        return None
+    try:
+        asset = read_json(path)
+    except ValueError:
+        return None
+    return slot if asset.get("asset_id") == asset_id else None
 
 
 def load_asset(root: Path, asset_id: str, unit_id: str | None = None) -> dict:
@@ -255,21 +357,17 @@ def load_asset(root: Path, asset_id: str, unit_id: str | None = None) -> dict:
     return read_json(folder / "asset.json")
 
 
-def list_assets(root: Path) -> list[dict]:
-    """Every asset of this Unit, newest first, one per asset id."""
-    found: dict[str, dict] = {}
-    for folder in unitmatch.asset_dirs_for(unitmatch.unit_workspaces(root)):
-        path = folder / "asset.json"
-        if not path.is_file():
-            continue
-        try:
-            asset = read_json(path)
-        except ValueError:
-            continue
-        current = found.get(asset["asset_id"])
-        if current is None or (asset.get("generated_at") or "") > (current.get("generated_at") or ""):
-            found[asset["asset_id"]] = asset
-    return sorted(found.values(), key=lambda item: item.get("generated_at") or "", reverse=True)
+def list_assets(root: Path, unit_id: str | None = None) -> list[dict]:
+    """Every asset of this Unit. 单例化后恒至多一份（当前槽）。"""
+    slot = current_asset_dir(root, unit_id)
+    path = slot / "asset.json"
+    if not path.is_file():
+        return []
+    try:
+        asset = read_json(path)
+    except ValueError:
+        return []
+    return [asset]
 
 
 def attach_claims(root: Path, asset_id: str, claims: list[dict], unit_id: str | None = None,
@@ -285,6 +383,7 @@ def attach_claims(root: Path, asset_id: str, claims: list[dict], unit_id: str | 
     Re-attaching replaces the claim with the same (session_key, from_ts, to_ts)
     and keeps the asset_id -- claims never participate in the id derivation, so
     adding a citation to a published asset is an upgrade, not a new asset.
+    落点=当前槽（find_asset 按指纹寻址）。
     """
     from . import vault as vault_mod
 
@@ -298,17 +397,39 @@ def attach_claims(root: Path, asset_id: str, claims: list[dict], unit_id: str | 
     located: list[dict] = []
     reasons: list[str] = []
     for claim in claims:
+        has_quote_side = bool((claim.get("session_key") or "").strip()
+                              and (claim.get("from_ts") or "").strip()
+                              and (claim.get("to_ts") or "").strip())
+        material = claim.get("material")
         try:
-            found = anchors.locate(vr, claim.get("session_key") or "",
-                                   claim.get("from_ts") or "", claim.get("to_ts") or "")
-            located.append(anchors.make_claim(found, claim.get("title") or ""))
+            item = None
+            if has_quote_side:
+                found = anchors.locate(vr, claim.get("session_key") or "",
+                                       claim.get("from_ts") or "", claim.get("to_ts") or "")
+                item = anchors.make_claim(found, claim.get("title") or "")
+            elif not material:
+                raise LabError("这条 claim 既没有引文区间也没有材料活引用，视为无效：%s"
+                               % (claim.get("title") or "（无标题）"))
+            if material:
+                ref = anchors.validate_material_locator(material.get("locator"))
+                snapshot = (material.get("snapshot_sha256") or "").strip()                     or anchors.material_snapshot(root, ref)
+                entry = {"locator": {"scheme": "ws-rel", "ref": ref},
+                         "role": str(material.get("role") or "").strip() or None,
+                         "snapshot_sha256": snapshot}
+                if item is None:
+                    item = {"title": claim.get("title") or "", "material": entry,
+                            "state": "verified", "stale_reason": None}
+                else:
+                    item["material"] = entry
+            if item is not None:
+                located.append(item)
         except LabError as exc:
             reasons.append(str(exc))
     if reasons:
         raise LabError("有 %d 条 claim 无法落锚，资产未改：\n%s" % (len(reasons), "\n".join("- " + r for r in reasons)))
 
     existing = asset.get("claims") or []
-    key_of = lambda item: (item["session_key"], item["from_ts"], item["to_ts"])  # noqa: E731
+    key_of = lambda item: (item.get("session_key"), item.get("from_ts"), item.get("to_ts"))  # noqa: E731 # 材料活引用没有引文三键
     merged = [item for item in existing if key_of(item) not in {key_of(n) for n in located}]
     merged.extend(located)
     asset["claims"] = merged
@@ -336,7 +457,17 @@ def verify_claims(root: Path, asset_id: str, unit_id: str | None = None,
         raise LabError("这份资产还没有引文可核对（先 attach_claims）")
     vr = Path(vault_root) if vault_root else vault_mod.vault_root()
     stale = []
+    drift = []
     for claim in claims:
+        if claim.get("material"):
+            # 活引用核对：snapshot 对不上是**诚实账**（记 VALIDATION.md 口径，不阻断、不降级
+            # ——文件被改反而该读新的，指针不搬运）。这一支不进引文 stale 判定。
+            ref = ((claim.get("material") or {}).get("locator") or {}).get("ref") or ""
+            expected = (claim.get("material") or {}).get("snapshot_sha256")
+            path = root / ref
+            if not expected or not path.is_file()                     or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                drift.append(claim.get("title") or ref)
+            continue
         try:
             found = anchors.locate(vr, claim["session_key"], claim["from_ts"], claim["to_ts"])
             if found["quote_sha256"] == claim["quote_sha256"]:
@@ -352,4 +483,155 @@ def verify_claims(root: Path, asset_id: str, unit_id: str | None = None,
             stale.append(claim["title"])
     asset["claims"] = claims
     _write_folder(folder, asset)
-    return {"asset_id": asset_id, "verified": len(claims) - len(stale), "stale": stale}
+    return {"asset_id": asset_id, "verified": len(claims) - len(stale),
+            "stale": stale, "material_drift": drift}
+
+
+def _pick_base_generation(slot_dir: Path, generations: list[Path], payloads: dict[Path, dict],
+                          preferred_asset_id: str | None) -> tuple[dict | None, str | None, str | None]:
+    """基代优先级 当前槽 > preferred（账本最新笔）> generated_at 最新 > None（报错）。
+
+    目录名是 asset_id 哈希、字母序与时间无关——绝不能拿 `generations[-1]` 当"最新"。
+    """
+    if (slot_dir / "asset.json").is_file():
+        try:
+            return read_json(slot_dir / "asset.json"), slot_dir.name, "current-slot"
+        except ValueError:
+            pass
+    if preferred_asset_id:
+        for folder in generations:
+            data = payloads.get(folder)
+            if data and (data.get("asset_id") == preferred_asset_id
+                         or folder.name == preferred_asset_id):
+                return data, folder.name, "reforge-ledger"
+    dated = [(str((payloads.get(folder) or {}).get("generated_at") or ""), folder)
+             for folder in generations if payloads.get(folder)]
+    dated = [(stamp, folder) for stamp, folder in dated if stamp]
+    if dated:
+        dated.sort(key=lambda item: item[0])
+        stamp, folder = dated[-1]
+        return payloads[folder], folder.name, "newest-generated-at"
+    return None, None, None
+
+
+def migrate_singleton(root: Path, unit_id: str, apply: bool = False,
+                      preferred_asset_id: str | None = None) -> dict:
+    """历史代 asset-* 收编进单槽。
+
+    各历史代 asset.json 的 claims 按 (session_key, sha256, material.ref) 三元组去重、
+    逐条核对（现成核对件），可核对的合并进单槽 → 写单槽 → 删除全部 asset-* 目录 →
+    打印报告（合并/失效/删除计数）。不带 --yes（apply=False）只打印将执行的动作清单。
+    迁移后 reforges 账本不动（审计在账）。
+    """
+    import shutil
+
+    home = unitmatch.home_path(unit_id)
+    if not home:
+        raise LabError("协作主题没有家目录：%s" % unit_id)
+    base = meta_dir(Path(home)) / ASSETS_DIR
+    generations = sorted(folder for folder in (base.glob("asset-*") if base.is_dir() else [])
+                         if (folder / "asset.json").is_file())
+    slot_dir = current_asset_dir(Path(home), unit_id)
+    plan = {"unit_id": unit_id, "home": Path(home).as_posix(),
+            "generations": [folder.name for folder in generations],
+            "slot": slot_dir.name,
+            "actions": []}
+
+    # 1) 收集并去重 claims（三元组；只数不核对的部分留给报告）。
+    seen: set[tuple] = set()
+    candidates: list[dict] = []
+    payloads: dict[Path, dict] = {}
+    for folder in generations:
+        try:
+            data = read_json(folder / "asset.json")
+        except ValueError:
+            plan["actions"].append("跳过不可读代：%s" % folder.name)
+            continue
+        payloads[folder] = data
+        for claim in data.get("claims") or []:
+            material = claim.get("material") or {}
+            # 三元组第三列取「内容 sha」：引文取 quote_sha256，材料取快照指纹——
+            # 同一材料被改过前后的两条不是同一条 claim，不能合并。
+            key = (claim.get("session_key") or "",
+                   claim.get("quote_sha256") or material.get("snapshot_sha256") or "",
+                   (material.get("locator") or {}).get("ref") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(claim)
+    plan["candidate_claims"] = len(candidates)
+    plan["delete_dirs"] = len(generations)
+    plan["actions"].append("合并 %d 条去重 claims 进单槽" % len(candidates))
+    plan["actions"].append("删除 %d 个历史代目录（%s）"
+                           % (len(generations), "、".join(plan["generations"])
+                              if plan["generations"] else "无"))
+    if not generations:
+        plan["applied"] = False
+        plan["note"] = "没有历史代目录——单槽已是唯一形态，无需迁移"
+        return plan
+    # 基代按「当前槽 > 账本最新笔 > generated_at 最新」选，报告里写明
+    # 选的是哪一代、凭什么（base_generation / base_reason）；预演也照样给出。
+    base_asset, base_generation, base_reason = _pick_base_generation(
+        slot_dir, generations, payloads, preferred_asset_id)
+    plan["base_generation"] = base_generation
+    plan["base_reason"] = base_reason
+    if base_asset is not None:
+        plan["actions"].append("基代=%s（%s）" % (base_generation, base_reason))
+    if not apply:
+        plan["applied"] = False
+        plan["note"] = "只打印清单（未带 --yes）：一个字节都没动"
+        return plan
+
+    # 2) 逐条核对（冻结引文对 vault 分片 sha、材料对文件指纹）；失效分桶。
+    carried: list[dict] = []
+    skipped: dict[str, int] = {}
+    for claim in candidates:
+        one, bucket = _inherit_claims({"claims": [claim]}, Path(home))
+        if one:
+            carried.extend(one)
+        else:
+            for name, count in bucket.items():
+                skipped[name] = skipped.get(name, 0) + count
+
+    # 3) 写单槽：基代见上（绝不按目录名字母序取"最新"），claims=合并集。
+    if base_asset is None:
+        raise LabError("没有可作底的资产（当前槽与历史代都不可读）")
+    base_asset.pop("inherited_claims", None)
+    base_asset.pop("skipped_claims", None)
+    base_asset["claims"] = carried
+    if carried:
+        base_asset["profile"] = "claim-anchored"
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    _write_folder(slot_dir, base_asset)
+
+    # 4) 删全部历史代（单槽不动）。
+    removed = 0
+    for folder in generations:
+        shutil.rmtree(folder, ignore_errors=True)
+        removed += 1
+    plan.update({"applied": True, "merged_claims": len(carried),
+                 "skipped_claims": skipped, "removed_dirs": removed,
+                 "slot_asset_id": base_asset.get("asset_id"),
+                 "base_generation": base_generation, "base_reason": base_reason,
+                 "note": "已收编：%d 条 claims 进单槽，删除 %d 个历史代目录" % (len(carried), removed)})
+    return plan
+
+
+def delete_asset(root: Path, asset_id: str, unit_id: str | None = None) -> dict:
+    """Delete a draft asset folder, whole. Only `status: draft` may be deleted.
+
+    A serving asset is the injection source of some workspace -- removing it
+    would leave the fan-out pointing at nothing, so the verb refuses loudly and
+    the caller (UI or CLI) tells the user to retire it first. The folder is the
+    whole asset: the four-piece contract means there is nothing else to clean.
+    """
+    import shutil
+
+    folder = find_asset(root, asset_id, unit_id)
+    if folder is None:
+        raise LabError("asset not found: %s" % asset_id)
+    asset = read_json(folder / "asset.json")
+    if (asset.get("status") or "draft") != "draft":
+        raise LabError("只有 draft 状态的草稿可以删除：%s 的状态是 %s" % (asset_id, asset.get("status")))
+    shutil.rmtree(folder)
+    return {"asset_id": asset_id, "removed": True, "path": folder.as_posix()}

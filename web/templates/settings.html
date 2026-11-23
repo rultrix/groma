@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip %}
+{% block body %}
+<h1>设置</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  这里的设置属于<b>整机</b>，不再按工作区各存一份；保存后立即生效（归类设置下一次归类生效）。
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">采集</div>
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="muted">采集间隔</span>
+    <input type="number" name="interval" min="1" max="1440" value="{{ settings.collect_interval_minutes }}"
+           style="width:84px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px">
+    <span class="muted">分钟</span>
+    <button type="submit" class="ghost">保存</button>
+    {{ tip("这一份设置属于整机，不再按工作区各存一份") }}
+    {% if settings.legacy_workspace_file %}
+    <span class="badge off">旧设置文件仍在 · 已不生效</span>
+    {{ tip("不覆盖、不删除：.groma/settings.json 原样留在工作区里，只是不再读它") }}
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">归类</div>
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="muted" style="min-width:64px">归类用的模型</span>
+    <input name="classify_model" value="{{ settings.classify_model or '' }}" placeholder="Qwen3.8-Flash"
+           style="width:200px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <span class="muted" style="min-width:64px">CLI 路径</span>
+    <input name="classify_provider" value="{{ settings.classify_provider or '' }}" placeholder="留空=自动探测"
+           style="flex:1;min-width:260px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <span class="muted" style="min-width:64px">身份首行</span>
+    <input name="classify_signature" value="{{ settings.classify_signature or '' }}" placeholder="Usage: qoderclicn"
+           style="width:220px;padding:7px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+    <button type="submit" class="ghost">保存</button>
+    {{ tip("改完下一次归类就生效") }}
+    <div class="muted" style="flex-basis:100%;margin-top:2px">
+      归类链：最近一次尝试 {% if classify_status.attempt[1] %}<b>{{ classify_status.attempt[1]|local_ts }}</b>（{{ classify_status.attempt[0] }} · {{ classify_status.attempt[2] }}）{% else %}<b>从未</b>{% endif %}
+      ｜ 最近一次成功 {% if classify_status.success[1] %}<b>{{ classify_status.success[1]|local_ts }}</b>（{{ classify_status.success[0] }}）{% else %}<b>从未</b>{% endif %}
+      {% if classify_status.attempt[1] and classify_status.attempt[2] != "已应用" %}<span style="color:#b45309">—— 最近一次是失败</span>{% endif %}
+    </div>
+    <details class="muted">
+      <summary>命令行验证</summary>
+      验证 CLI 路径用 <code>groma provider check --path …</code>
+    </details>
+  </form>
+</div>
+
+{# 哨兵 auto_form：复选框不勾选时浏览器根本不发这个键，所以服务端只认
+   「本次提交带了 auto_form → 这两个布尔键按 ==on 无条件赋值」。
+   删掉它 = 两个开关永远关不掉（K2 的复选框陷阱）。 #}
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">花额度的自动化</div>
+  <form method="post" action="{{ url_for('settings_save') }}" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="auto_form" value="1">
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input type="checkbox" name="auto_reforge" value="on" {% if settings.auto_reforge %}checked{% endif %}>自动重铸资产</label>
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input type="checkbox" name="auto_inject" value="on" {% if settings.auto_inject %}checked{% endif %}>自动投放到工作区</label>
+    <button type="submit" class="ghost">保存</button>
+    {# I8：跨页指路是重复；「不用猜」是设计师口吻，删（原注释见 index.html 历史）。 #}
+    <span class="muted">开着时，一次归类会顺带花额度重铸资产并投放到工作区；关掉后链路停在「已归类」。</span>
+  </form>
+</div>
+{% endblock %}

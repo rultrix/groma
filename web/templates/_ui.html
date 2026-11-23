@@ -1,11 +1,50 @@
 {# ⓘ 承载一（`tip` 宏）的唯一写法。
 
-   为什么要有这个宏：设计侧复核裁定 1 要求 ⓘ 同时给 `data-tip`（CSS 浮窗的文本源）、
+   为什么要有这个宏：设计侧复核要求 ⓘ 同时给 `data-tip`（CSS 浮窗的文本源）、
    `title`（原生悬停）与 `aria-label`（读屏），再加 `tabindex="0"` 让 `:focus-visible` 够得到。
    四个属性手写十几遍，漏任何一个就是"hover-only"或"读屏读到一个圆圈"，
    而这种退化不会有任何测试变红——所以把它收成一个调用点。
 
-   文本只许传纯文本：这里不做转义以外的加工，`<b>` 之类的标记会当字面量进属性。 #}
+   文本只许传纯文本：这里不做转义以外的加工，`<b>` 之类的标记会当字面量进属性。#}
 {% macro tip(text) -%}
 <span class="hint" tabindex="0" data-tip="{{ text }}" title="{{ text }}" aria-label="说明：{{ text }}">ⓘ</span>
+{%- endmacro %}
+
+{# 时刻卡（屏 5）：units 接力卡与 assets 页顶部共用同一形状（同一宏，不复制两份）。
+   句式/触发判据行照屏 5；主按钮=「按最近 5 会话铸简报」（链预览页），
+   直投「现在投」退场——投递动作只留在预览页；「忽略这一次」ghost 保留（POST 路由原样）。#}
+{% macro handoff_moment(card, ignore_action) -%}
+<div class="ok">
+  <b>检测到换 harness：</b>上一会话 <code>{{ card.from }}</code>（{{ card.prev_key or "—" }} · {{ card.prev_at|local_ts }}），新出现 <code>{{ card.to }}</code> 会话
+  <div class="muted" style="margin-top:4px">工作区 {{ card.ws_name }} · 触发判据：digest 中同工作区出现新 harness 的首个会话（每会话都带 harness 字段，无需新采集）</div>
+  <div class="muted" style="margin-top:6px">简报这样铸（铸好后自动投给 {{ card.to }} 的装载面，从 {{ card.ws_name }}）：</div>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+    <a class="primary" href="{{ url_for('units_handoff_preview', path=card.path) }}">按最近 5 会话铸简报</a>
+    <form method="post" action="{{ ignore_action }}">
+      <input type="hidden" name="path" value="{{ card.path }}">
+      <button type="submit" class="ghost">忽略这一次</button>
+    </form>
+  </div>
+</div>
+{%- endmacro %}
+
+{# 结构化简报 payload 卡（屏 5）：handoff.html 预览页与 units 预览折面同形状。
+   四段=build_brief 现算（GET 零写入）；材料行=.material 块（快照态现算：sha 对上=未变）；
+   「为什么读」行仅当数据带用途字段才渲染——现数据没有，不造句。#}
+{% macro relay_brief_card(card) -%}
+<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-top:8px;background:#fff">
+  <div><b>接力简报：{{ card.from }} → {{ card.to }} · {{ card.ws_name }}</b>
+    {% if card.fresh %}<span class="badge on">新鲜</span>{% else %}<span class="badge off">历史棒</span>{% endif %}</div>
+  <div style="margin-top:8px;font-size:13px">
+    <div><b>进行到哪：</b>{{ card.progress|join("；") or "（窗口里没有会话）" }}</div>
+    <div><b>最近决策：</b>{{ card.claims|join("；") or "（无）" }}</div>
+    <div><b>开放问题：</b>{{ card.open|join("；") or "（无）" }}</div>
+    <div><b>交接材料：</b>{{ card.materials|join("；") or "（无）" }}</div>
+  </div>
+  {% for m in card.material_blocks %}
+  <div class="material" style="margin-top:8px">
+    📋 <code>{{ m.path }}</code>（{% if m.role %}role: {{ m.role }} · {% endif %}ws-rel · 快照 {{ m.snapshot }} √ {{ m.state }}）
+  </div>
+  {% endfor %}
+</div>
 {%- endmacro %}

@@ -287,17 +287,20 @@ class UnitMembershipTests(unittest.TestCase):
             cli_main(["--root", str(self.worktree), "unit", "rename", "--name", "换了名字"])
         self.assertEqual(state.unit_record(load_unit(self.primary)["unit_id"])["name"], "换了名字")
 
-    def test_sync_units_folds_cards_into_one_unit_record(self) -> None:
+    def test_sync_keeps_the_claim_but_does_not_import_the_card_name(self) -> None:
+        """退役复活语义（原为「同远端卡直接折成带卡名/org 的行」）。
+
+        卡只证工作区身份——sync 折出的行用注册表行的名字，
+        不再抄卡上的 `name`/`org_path`；同远端 clone 的**身份认领**不受影响。
+        """
         clone = self._repo(self.base / "clone")
         init_workspace(clone, name="thing")  # same remote, so the same Unit is claimed
         unitmatch.join(self.primary, None, self.worktree)
-        result = unitmatch.sync_units()
+        unitmatch.sync_units()
         unit_id = load_unit(self.primary)["unit_id"]
         record = state.unit_record(unit_id)
         self.assertIsNotNone(record)
-        self.assertEqual(record["name"], "thing")
-        self.assertEqual(record["org_path"], "github.com/projX/thing")
-        self.assertIn(unit_id, result["created"])
+        self.assertNotEqual(record["name"], "thing", "卡上的名字不该被抄进折出来的行（卡只证身份）")
         self.assertIn(unit_id, [item["unit_id"] for item in unitmatch.unit_list()])
         # the Unit's home is a real property now, not "wherever the mouse is"
         self.assertEqual(record["home_binding"], unitmatch.binding_id_for(self.primary))
@@ -320,17 +323,29 @@ class UnitMembershipTests(unittest.TestCase):
         self.assertIn(self.primary.as_posix(), paths)  # the old home stays a member
         self.assertEqual(unitlink.read_link(self.worktree)["unit_id"], unit_id)
 
-    def test_rename_applies_to_every_folder_carrying_the_card(self) -> None:
+    def test_rename_applies_to_members_not_to_a_stranger_card(self) -> None:
+        """退役复活语义（原为「改名外溢到每张同卡并折它进成员」）。
+
+        卡不再折成员——陌生 clone 挂着同身份的卡也只是身份相同，
+        改名只写**成员**的卡；身份认领本身不受影响。
+        """
         unit_id = load_unit(self.primary)["unit_id"]
         clone = self._repo(self.base / "clone")
         # a second clone of the same repo carries the same committed card
         unitlink.adopt_link(clone, unitmatch.identity_of(unit_id))
         init_workspace(clone, name="thing")
+        init_workspace(self.worktree, name="worktree")
+        unitmatch.join(self.primary, None, self.worktree)
         unitmatch.sync_units()
-        self.assertEqual(len(unitmatch.workspaces_for_unit(unit_id)), 2)
+        self.assertEqual(len(unitmatch.workspaces_for_unit(unit_id)), 2,
+                         "陌生卡把自己折成了成员（卡只证身份）")
         unitmatch.rename_unit(unit_id, "ACPE 采集改造")
         self.assertEqual(state.unit_record(unit_id)["name"], "ACPE 采集改造")
         self.assertEqual(unitlink.read_link(self.primary)["name"], "ACPE 采集改造")
+        # 成员带的是关系不是卡：worktree 的卡不跟改名（_refresh_cards 走注册表指针，不走成员关系）
+        self.assertEqual(unitlink.read_link(self.worktree)["name"], "worktree")
+        # 同仓 clone 的注册表行仍指向这条 Unit（登记时抄的卡），改名照旧跟到它——
+        # 改的不是改名半径，是"卡能不能折出成员/主题行"
         self.assertEqual(unitlink.read_link(clone)["name"], "ACPE 采集改造")
         self.assertEqual(load_unit(clone)["name"], "ACPE 采集改造")
 
@@ -450,7 +465,7 @@ class UnitScopedEvidenceTests(unittest.TestCase):
         self.assertEqual(asset["totals"]["sessions"], 1)
         self.assertEqual(asset["workspace_count"], 2)
         self.assertEqual([item["name"] for item in asset["digests"]], [asset["sessions"][0]["digest"]])
-        readme = (self.home / ".groma" / "assets" / asset["asset_id"] / "README.md").read_text(encoding="utf-8")
+        readme = (self.home / ".groma" / "assets" / "current" / "README.md").read_text(encoding="utf-8")
         self.assertIn("覆盖工作区：2 个", readme)
         self.assertNotIn(self.member.as_posix(), readme)  # the join stays local, no paths leak
         context = Path(export_context(self.home, asset["asset_id"])["context"]).read_text(encoding="utf-8")
@@ -2036,13 +2051,13 @@ class AssetTests(unittest.TestCase):
 
     def test_build_writes_the_four_pieces(self) -> None:
         asset = self._build()
-        folder = self.root / ".groma" / "assets" / asset["asset_id"]
+        folder = self.root / ".groma" / "assets" / "current"
         for name in ("asset.json", "README.md", "VALIDATION.md", "manifest.json"):
             self.assertTrue((folder / name).is_file(), name)
 
     def test_manifest_hashes_match_the_files(self) -> None:
         asset = self._build()
-        folder = self.root / ".groma" / "assets" / asset["asset_id"]
+        folder = self.root / ".groma" / "assets" / "current"
         manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
         import hashlib
 
@@ -2053,7 +2068,7 @@ class AssetTests(unittest.TestCase):
 
     def test_no_absolute_path_and_no_content(self) -> None:
         asset = self._build()
-        folder = self.root / ".groma" / "assets" / asset["asset_id"]
+        folder = self.root / ".groma" / "assets" / "current"
         text = "".join(path.read_text(encoding="utf-8") for path in folder.glob("*"))
         self.assertNotIn(self.root.as_posix(), text)
         self.assertNotIn(self.SENTINEL, text)
@@ -2099,7 +2114,7 @@ class AssetTests(unittest.TestCase):
 
     def test_content_asset_exports_its_readme(self) -> None:
         asset = self._build()
-        folder = self.root / ".groma" / "assets" / asset["asset_id"]
+        folder = self.root / ".groma" / "assets" / "current"
         payload = json.loads((folder / "asset.json").read_text(encoding="utf-8"))
         payload["content_stored"] = True
         (folder / "asset.json").write_text(json.dumps(payload), encoding="utf-8")

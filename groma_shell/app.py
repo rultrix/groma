@@ -78,6 +78,12 @@ def run(unit_root: Path, port: int = 8787) -> None:
             return
         sync_agents(unit_root)
         catchup(unit_root, written_by="shell:start")  # app-start trigger, rate-limited and paused-aware
+        try:
+            # shell 不复用 cli web 路径，回放同样只在启动段跑；只入账不投递。
+            from lab.handoff import replay_unit_handoffs
+            replay_unit_handoffs(unit_root)
+        except Exception as exc:  # noqa: BLE001 - 回放失败不拦 shell 启动
+            _log("groma shell: handoff replay failed: %s" % exc)
     except Exception as exc:  # noqa: BLE001 - surfaced to the user, then re-raised
         _fatal("无法启动：%s" % exc)
         raise

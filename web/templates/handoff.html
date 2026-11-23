@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_ui.html" import tip, relay_brief_card %}
+{% block body %}
+<h1>接力简报 · {{ record.to_harness }} 接棒</h1>
+<div class="muted" style="margin:-8px 0 14px">
+  触发是 digest 硬事实：上一会话 <code>{{ record.from_harness }}</code> → 新会话 <code>{{ record.to_harness }}</code>。
+  简报只投给接棒方的装载面；{{ tip("「忽略这一次」后这笔不再被检出——一次性") }}
+</div>
+
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">简报预览（N={{ brief.window }} 窗口，四段）</div>
+  {# 纯文本 → 结构化 payload 卡（与 units 预览折面同一宏同一形状）。#}
+  {% if brief_card %}{{ relay_brief_card(brief_card) }}{% endif %}
+  <details style="margin-top:8px">
+    <summary class="muted" style="cursor:pointer">纯文本版（投递即此形状）</summary>
+    <pre style="white-space:pre-wrap;font-size:13px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">{{ brief_text }}</pre>
+  </details>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+    <form method="post" action="{{ url_for('units_handoff_deliver') }}">
+      <input type="hidden" name="path" value="{{ workspace }}">
+      <button type="submit">现在投</button>
+    </form>
+    <form method="post" action="{{ url_for('units_handoff_ignore') }}">
+      <input type="hidden" name="path" value="{{ workspace }}">
+      <button type="submit" class="ghost">忽略这一次</button>
+    </form>
+    <a class="muted" href="{{ url_for('units_page') }}">先不动</a>
+  </div>
+</div>
+{% endblock %}

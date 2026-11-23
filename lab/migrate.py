@@ -203,17 +203,57 @@ def _apply_startup(plan: dict) -> dict:
         return {**plan, "action": "failed", "error": str(exc)}
 
 
+def _injection_sources_plan() -> dict:
+    """Per-workspace manifest sources that predate the topic-level ledger.
+
+    The first manifest that names a topic without a topic-level registration
+    becomes that topic's authoritative source; identical siblings are folded
+    (they were projections of one manual choice anyway).
+    """
+    from . import surface as surface_mod
+    from . import topics as topics_mod
+
+    found: dict[str, dict] = {}
+    for item in state.list_workspaces():
+        root = Path(item["path"])
+        if not root.is_dir():
+            continue
+        source = (surface_mod.read_manifest(root).get("source") or {})
+        unit_id = source.get("unit_id")
+        if not (source.get("asset_id") and unit_id) or source.get("authority"):
+            continue
+        if topics_mod.get_injection_source(unit_id) is not None:
+            continue
+        found.setdefault(unit_id, {"topic_id": unit_id, "asset_id": source["asset_id"],
+                                   "title": source.get("title"), "workspace": item["path"]})
+    return {"to_register": sorted(found.values(), key=lambda item: item["topic_id"])}
+
+
+def _apply_injection_sources(plan: dict) -> list[dict]:
+    from . import topics as topics_mod
+
+    applied = []
+    for item in plan["to_register"]:
+        record = topics_mod.set_injection_source(item["topic_id"], item["asset_id"],
+                                                 title=item.get("title"),
+                                                 decided_by="manifest-migration")
+        applied.append({"topic_id": item["topic_id"], "asset_id": record["asset_id"]})
+    return applied
+
+
 def run(apply: bool = False) -> dict:
     workspaces = [item["path"] for item in state.list_workspaces()]
     state_plan = _state_plan()
     workspace_plans = [_workspace_plan(Path(path)) for path in workspaces]
     startup_plan = _startup_plan()
+    injection_plan = _injection_sources_plan()
     report = {
         "schema": 1,
         "applied": bool(apply),
         "state": state_plan,
         "workspaces": workspace_plans,
         "startup": startup_plan,
+        "injection_sources": injection_plan,
         "notes": [
             "old installed program (%LOCALAPPDATA%\\Programs\\wb) and its shortcuts are not touched",
             "project files, harness databases and sessions are never moved",
@@ -224,4 +264,5 @@ def run(apply: bool = False) -> dict:
     report["state"] = _apply_state(state_plan)
     report["workspaces"] = [_apply_workspace(item) for item in workspace_plans]
     report["startup"] = _apply_startup(startup_plan)
+    report["injection_sources"]["registered"] = _apply_injection_sources(injection_plan)
     return report

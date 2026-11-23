@@ -97,7 +97,7 @@
     </details>
   </div>
 
-  {# B · 这个区的采集根：唯一的「申报这个根」入口（裁定 3）。 #}
+  {# B · 这个区的采集根：唯一的「申报这个根」入口。#}
   <div style="margin-top:14px">
     <div class="muted" style="margin-bottom:6px"><b>这个区的采集根</b>（每家 Harness 一个根；申报一次，这一区就开始采它）</div>
     <table>
@@ -170,8 +170,8 @@
         {% if row.is_temp %}<span class="badge off" style="margin-left:6px">临时目录</span>{% endif %}
         <div class="muted"><code>{{ row.path }}</code></div>
         {# 移除的入口以前只在主题页，"只登记没挂主题"的工作区在今天那页是隐形的
-           （裁定 3 的后果），所以每个已登记区都要能在这里被移除。放在第一格里而不是加第 6 列：
-           「0 条的原因」那一列的测试取法是"取这一行最后一个 <td>"，加尾列会让那条钉子读到动作格（W4 §18 同族）。 #}
+           （这一规定的后果），所以每个已登记区都要能在这里被移除。放在第一格里而不是加第 6 列：
+           「0 条的原因」那一列的测试取法是"取这一行最后一个 <td>"，加尾列会让那条钉子读到动作格（同族前例）。#}
         <div style="margin-top:4px"><a class="danger" style="font-size:14px;text-decoration:none"
              href="{{ url_for('workspace_remove_page', path=row.path) }}">移除</a></div>
       </td>
@@ -186,11 +186,11 @@
            ① 本机装着、这个区却没申报（第四支）——**只有选中行才算**。两重理由：
               取证上 `candidates` 的 `declared` 是**对着"当前查看"那一个区**算出来的（`web/app.py` 的
               `discover(chosen, [chosen.as_posix()])`），拿它去说别的行 = 界面在说没依据的话；
-              开销上逐行调用就是 N× 扫盘（裁定 10：`web/app.py` 不改取数）；
+              开销上逐行调用就是 N× 扫盘（`web/app.py` 不改取数）；
            ② 「归在别的工作区」这句**必须有 `outside` 才算**——原第一支在 `outside` 为 0/空时照样断言，
               那是界面在说谎（R22 的病灶，`tests/test_web.py::test_the_attribution_reason_only_appears_with_evidence` 钉住）；
            ③ 没证据那条改指向「这个区的采集面」的「本机实物」列——那一列才是承载证据的地方
-              。 #}
+              。#}
         {% set undeclared = candidates | selectattr("exists") | rejectattr("declared") | map(attribute="name") | list if row.selected else [] %}
         {% if row.collected == 0 and undeclared %}申报的根里没有 {{ undeclared | join("、") }}（本机装着），所以这区的它们永远是 0
         {% elif row.sources and row.collected == 0 and row.outside %}申报了根；{{ row.outside }} 条会话归在别的工作区

@@ -17,10 +17,28 @@ import hashlib
 from pathlib import Path
 
 from . import hooks, surface, unitmatch
-from .asset import find_asset, load_asset
+from .asset import find_asset
 from .workspace import LabError, load_unit, meta_dir, read_json, utc_stamp
 
 EXPORTS_DIR = "exports"
+
+
+def _load_slot(root: Path, unit_id: str | None = None, expect_id: str | None = None) -> dict:
+    """单槽读件：读当前槽（<家>/.groma/assets/current/）。
+
+    expect_id 与槽指纹不符**不报错**——指纹不符=既有「偏旧」语义（覆写瞬间已投区
+    判偏旧，refresh 收敛），不再按目录身份找资产；槽空才是真缺资产。
+    """
+    from .asset import current_asset_dir
+
+    folder = current_asset_dir(Path(root), unit_id)
+    path = folder / "asset.json"
+    if not path.is_file():
+        raise LabError("asset not found: %s" % (expect_id or "（当前槽为空）"))
+    try:
+        return read_json(path)
+    except ValueError as exc:
+        raise LabError("asset not found: %s" % (expect_id or "current")) from exc
 
 
 def _render(asset: dict, content_body: str | None = None) -> tuple[str, str]:
@@ -45,7 +63,7 @@ def _render_index(asset: dict) -> str:
     lines = [
         "# 上下文资产：%s" % asset["title"],
         "",
-        "> 由 Groma 从 %d 个会话生成。只包含结构与出处，**不包含对话正文**。" % asset["totals"]["sessions"],
+        "> 由 Groma 从 %d 个会话生成。只包含结构与出处**不包含对话正文**。" % asset["totals"]["sessions"],
         provenance,
         "",
         "## 这份资产能回答什么",
@@ -89,7 +107,7 @@ def _render_index(asset: dict) -> str:
 
 
 def export_context(root: Path, asset_id: str, out: Path | None = None) -> dict:
-    asset = load_asset(root, asset_id)
+    asset = _load_slot(root, None, asset_id)  # 按当前槽读
     content_body = None
     folder = find_asset(root, asset_id)
     if asset.get("content_stored") and folder is not None:
@@ -123,7 +141,14 @@ def harnesses_here(root: Path) -> set[str]:
         digest = read_json(paths[-1])
     except (OSError, ValueError):
         return set()
-    return {item.get("harness") for item in digest.get("files", []) if item.get("harness")}
+    # digest 行的 harness 是 agent 身份带的（可能缺），缺了就退回声明源自报的
+    # harness——同一份证据，fan-out 仍只对真的在这里跑过的 harness 开面。
+    from .sources import load_sources
+
+    harnesses = {item.get("harness") for item in digest.get("files", []) if item.get("harness")}
+    if not harnesses:
+        harnesses = {source.get("harness") for source in load_sources(root) if source.get("harness")}
+    return harnesses
 
 
 def inject_unit(root: Path, asset_id: str, faces: list[str] | None = None,
@@ -135,7 +160,10 @@ def inject_unit(root: Path, asset_id: str, faces: list[str] | None = None,
     """
     root = Path(root)
     unit = unitmatch.resolve_unit(unit_id) if unit_id else load_unit(root)
-    asset = load_asset(root, asset_id, unit_id)
+    # 按当前槽读（指纹不符=偏旧语义，不按目录身份找）；标记块/账面的 asset
+    # 恒写当前槽指纹。
+    asset = _load_slot(root, unit_id, asset_id)
+    asset_id = asset["asset_id"]
     rows = unitmatch.unit_rows(unit["unit_id"])
     seen = harnesses_here(root)
     chosen = faces or surface.surfaces_for(seen, allow_project_files)
@@ -145,13 +173,23 @@ def inject_unit(root: Path, asset_id: str, faces: list[str] | None = None,
     blocked = [name for name in chosen if surface.SURFACES[name]["project_file"] and not allow_project_files]
     if blocked:
         raise LabError("%s 会被版本库跟踪，需要显式 --allow-project-file 才写" % "、".join(blocked))
-    body = surface.project_text(unit, rows, asset, root.as_posix())
+    # 投影：按面所属 harness 查角色表插视角句 + 对本区净增益折叠；载荷（hook 面）单独按 hook harness 渲染。
+    hook_harness = sorted(surface.HOOK_HARNESSES)[0] if surface.uses_hook(seen) else None
+    body = surface.project_text_for(
+        unit, rows, asset, root.as_posix(),
+        harness=hook_harness, role=_role_for(unit.get("unit_id"), hook_harness),
+        viewer_session_ids=_viewer_session_ids(asset, root))
     # 载荷永远先写：它是 hook 的读取源，待在 .groma/ 里，项目目录因此少一个被跟踪文件
     payload = surface.write_payload(root, body)
     results = []
     for name in chosen:
         face = surface.SURFACES[name]
-        record = surface.apply_block(root, face["path"], unit["unit_id"], asset_id, body)
+        face_harness = surface.HARNESS_BY_FACE.get(name)
+        face_body = surface.project_text_for(
+            unit, rows, asset, root.as_posix(),
+            harness=face_harness, role=_role_for(unit.get("unit_id"), face_harness),
+            viewer_session_ids=_viewer_session_ids(asset, root))
+        record = surface.apply_block(root, face["path"], unit["unit_id"], asset_id, face_body)
         results.append({**record, "face": name, "trust": face["trust"], "note": face["note"]})
 
     book = surface.read_manifest(root)
@@ -257,7 +295,7 @@ def refresh(root: Path) -> dict:
     if not source.get("asset_id"):
         return {"workspace": root.as_posix(), "state": "off", "changed": False}
     try:
-        asset = load_asset(root, source["asset_id"], source.get("unit_id"))
+        asset = _load_slot(root, source.get("unit_id"), source["asset_id"])  # 读当前槽
     except LabError:
         book["gate"] = {"state": "paused", "reason": "注入源资产已不在本 Unit 可寻址范围内：%s" % source["asset_id"]}
         surface.remove_payload(root)
@@ -293,13 +331,170 @@ def refresh(root: Path) -> dict:
 
 
 def refresh_unit(unit_id: str) -> list[dict]:
-    """Refresh every workspace of this Unit that has a chosen injection source."""
+    """Refresh every workspace of this Unit that has a chosen injection source.
+
+    A topic-level registration (the authority since the source model moved up a
+    level) drives the whole fan-out; workspaces that only carry the legacy
+    per-workspace manifest keep the old behaviour.
+    """
+    from . import topics
+
+    source = topics.get_injection_source(unit_id)
+    if source and source.get("asset_id"):
+        home = unitmatch.home_path(unit_id)
+        if not home:
+            return []
+        try:
+            asset = _load_slot(Path(home), unit_id, source["asset_id"])  # 读当前槽
+        except LabError:
+            return []
+        out = []
+        for path in unitmatch.workspaces_for_unit(unit_id):
+            workspace = Path(path)
+            if workspace.is_dir():
+                out.append(_project_source(workspace, unit_id, asset, source))
+        return out
     out = []
     for path in unitmatch.workspaces_for_unit(unit_id):
         workspace = Path(path)
         if (meta_dir(workspace) / "injections" / "manifest.json").is_file():
             out.append(refresh(workspace))
     return out
+
+
+def _project_source(workspace: Path, topic_id: str, asset: dict, source: dict) -> dict:
+    """Write ONE member workspace's projection of the topic-level source.
+
+    The manifest's `source` section mirrors the ledger (with `authority`:
+    "topic"), so A1's reconciliation and the summaries keep reading the same
+    shapes. A region the operator paused keeps its manifest (state `paused`,
+    who paused it stays visible) but loses its payload.
+    """
+    region_paused = workspace.as_posix() in [str(p) for p in (source.get("paused") or [])]
+    gate = gate_state(topic_id, asset)
+    if region_paused:
+        gate = {"state": "paused", "reason": "按区暂停：主题级注入源仍在服役，这一区被单独停了",
+                "asset_sessions": gate["asset_sessions"], "live_sessions": gate["live_sessions"],
+                "evidence_scope": gate["evidence_scope"]}
+    changed = False
+    payload_sha = None
+    if gate["state"] == "paused":
+        changed = surface.remove_payload(workspace)
+    else:
+        harness = sorted(surface.HOOK_HARNESSES)[0] if surface.uses_hook(
+            set(harnesses_here(workspace))) else None
+        body = surface.project_text_for(
+            unitmatch.resolve_unit(topic_id), unitmatch.unit_rows(topic_id),
+            asset, workspace.as_posix(),
+            harness=harness, role=_role_for(topic_id, harness),
+            viewer_session_ids=_viewer_session_ids(asset, workspace))
+        payload = surface.write_payload(workspace, body)
+        changed = bool(payload.get("changed"))
+        payload_sha = payload.get("sha256")
+        if changed:
+            book = surface.read_manifest(workspace)
+            for item in book.get("surfaces", []):
+                face = surface.SURFACES.get(item.get("face") or "")
+                if not face:
+                    continue
+                face_harness = surface.HARNESS_BY_FACE.get(item.get("face") or "")
+                again = surface.apply_block(workspace, item["path"], topic_id,
+                                            asset["asset_id"],
+                                            surface.project_text_for(
+                                                unitmatch.resolve_unit(topic_id),
+                                                unitmatch.unit_rows(topic_id),
+                                                asset, workspace.as_posix(),
+                                                harness=face_harness,
+                                                role=_role_for(topic_id, face_harness),
+                                                viewer_session_ids=_viewer_session_ids(asset, workspace)))
+                item["block_sha256"] = again["block_sha256"]
+                item["file_sha256"] = again.get("file_sha256_after", item.get("file_sha256"))
+                item["written_at"] = utc_stamp()
+            surface.write_manifest(workspace, book)
+    book = surface.read_manifest(workspace)
+    if payload_sha:
+        book["payload"] = {"sha256": payload_sha, "written_at": utc_stamp()}
+    else:
+        book.pop("payload", None)  # the manifest no longer claims a payload on disk
+    book["source"] = {
+        "asset_id": asset["asset_id"],
+        "unit_id": topic_id,
+        "title": asset.get("title"),
+        "generated_at": asset.get("generated_at"),
+        "set_at": source.get("set_at") or utc_stamp(),
+        "authority": "topic",
+        "topic_id": topic_id,
+        "paused_regions": [str(p) for p in (source.get("paused") or [])],
+    }
+    book["gate"] = gate
+    surface.write_manifest(workspace, book)
+    return {"workspace": workspace.as_posix(), "state": gate["state"],
+            "reason": gate.get("reason"), "changed": changed}
+
+
+def inject_theme(topic_id: str, asset_id: str | None = None,
+                 decided_by: str = "human") -> dict:
+    """Register the topic-level injection source and fan it out to ALL members.
+
+    One theme serves one asset to every workspace it spans; individual regions
+    can be paused separately (see `_project_source`). The ledger lives in
+    `topics` -- each manifest here is only a projection of it.
+    """
+    from . import topics
+
+    record = unitmatch.resolve_unit(topic_id)
+    if not record.get("unit_id"):
+        raise LabError("没有这个主题：%s" % (topic_id or "（空）"))
+    if asset_id is None:
+        asset_id = ((topics.get_injection_source(topic_id) or {}).get("asset_id")
+                    or (topics.last_reforge(topic_id) or {}).get("asset_id"))
+    if not asset_id:
+        raise LabError("这个主题还没有资产：先重铸，或显式指定 asset_id")
+    home = unitmatch.home_path(topic_id)
+    if not home:
+        raise LabError("协作主题没有家目录，资产无处寻址：%s" % topic_id)
+    asset = _load_slot(Path(home), topic_id, asset_id)  # 读当前槽
+    asset_id = asset["asset_id"]
+    registered = topics.set_injection_source(topic_id, asset_id,
+                                             title=asset.get("title"), decided_by=decided_by)
+    results = []
+    for path in unitmatch.workspaces_for_unit(topic_id):
+        workspace = Path(path)
+        if workspace.is_dir():
+            results.append(_project_source(workspace, topic_id, asset, registered))
+    return {"topic_id": topic_id, "asset_id": asset_id,
+            "workspaces": results,
+            "serving": [r["workspace"] for r in results if r["state"] != "paused"]}
+
+
+def _role_for(topic_id: str | None, harness: str | None) -> str | None:
+    """角色表查 harness 的角色；未配表 = None（零配置不插视角句）。
+
+    hook harness 有两个拼写（qoder / qoder-cn，digest 与声明源各用一种）：
+    查表时两个都试——角色是工作流属性，不该被拼写差异打断。
+    """
+    if not topic_id or not harness:
+        return None
+    from . import topics as topics_mod
+    roles = (topics_mod.pipeline_roles(topic_id) or {}).get("roles") or {}
+    role = roles.get(harness)
+    if role is None and harness in surface.HOOK_HARNESSES:
+        for alias in sorted(surface.HOOK_HARNESSES - {harness}):
+            role = roles.get(alias)
+            if role is not None:
+                break
+    return role
+
+
+def _viewer_session_ids(asset: dict, workspace: Path) -> set[str]:
+    """净增益归属：这台工作区 digest 里的会话在资产依据里出现的 session_id 集。"""
+    from .unitmatch import digest_records_for
+
+    known = {(item.get("source"), item.get("path"))
+             for record in digest_records_for([workspace.as_posix()])
+             for item in record.get("files") or []}
+    return {item.get("session_id") for item in asset.get("sessions") or []
+            if (item.get("source"), item.get("path")) in known}
 
 
 def _delivery_reconciliation(root: Path, book: dict) -> dict:
@@ -391,13 +586,55 @@ def injection_summary(unit_id: str) -> dict:
     return out
 
 
-def uninject(root: Path) -> dict:
-    """Take our blocks back out, drop the payload, and forget the chosen source."""
+def theme_injection_ratio(unit_id: str) -> dict:
+    """注入口径唯一来源：概览 strip 与主题页 hero 共用这一个 helper。
+
+    分子 = injection_summary 行中 asset_id 非空的区数（paused 但有源的区计入——
+    它确实被注入了，只是暂停）；分母 = 成员区总数。
+    送达聚合 = 同一批行的 delivery.state：含 stale→stale，全 match（且至少一行）→match，
+    一行都没有→none。
+    serving_rows = asset_id 非空行的工作区路径（名单口径与计数同源，显示名由调用方映射）。
+    """
+    summary = injection_summary(unit_id)
+    rows = list(summary.values())
+    injected_rows = [row for row in rows if row.get("asset_id")]
+    states = [(row.get("delivery") or {}).get("state") for row in injected_rows]
+    states = [state for state in states if state]
+    if any(state == "stale" for state in states):
+        delivery = "stale"
+    elif states and all(state == "match" for state in states):
+        delivery = "match"
+    else:
+        delivery = "none"
+    serving_rows = [path for path, row in summary.items() if row.get("asset_id")]
+    return {"injected": len(injected_rows), "total": len(rows),
+            "delivery": delivery, "serving_rows": serving_rows}
+
+
+def uninject(root: Path, unit_id: str | None = None) -> dict:
+    """Take our blocks back out; with a theme id, only THAT theme's rows go.
+
+    The one-theme-per-workspace assumption is retired: a manifest may carry rows
+    named by different themes, so removal is scoped by `unit_id` and the payload
+    only disappears when no surface row is left to serve it. Without a theme id
+    everything of ours in this workspace goes (used when the workspace itself is
+    leaving the machine).
+    """
     root = Path(root)
     book = surface.read_manifest(root)
-    results = [surface.remove_block(root, item["path"]) for item in book["surfaces"]]
-    surface.remove_payload(root)
-    surface.write_manifest(root, {"schema": 1, "surfaces": []})
+    rows = book["surfaces"]
+    if unit_id is None:
+        targets = list(rows)
+    else:
+        targets = [item for item in rows if (item.get("unit_id") or "") == unit_id]
+    results = [surface.remove_block(root, item["path"]) for item in targets]
+    kept = [item for item in rows if item not in targets]
+    if kept:
+        book["surfaces"] = kept
+        surface.write_manifest(root, book)
+    else:
+        surface.remove_payload(root)
+        surface.write_manifest(root, {"schema": 1, "surfaces": []})
     return {"removed": [item for item in results if item.get("changed")], "restart_hint": True}
 
 
@@ -451,7 +688,7 @@ def forget_workspace(root: Path, boot_root: Path | None = None) -> dict:
 def drop_unit(unit_id: str, boot_root: Path | None = None) -> dict:
     """Forget a theme and every pointer Groma left to it. Workspaces and files stay.
 
-    Guards live here, not in the route, so `groma unit delete` inherits them (裁定 7):
+    Guards live here, not in the route, so `groma unit delete` inherits them:
     ② the last remaining theme cannot be dropped, and ① when the caller knows the
     Groma boot root, the theme that claims it cannot be dropped either -- its folder
     would mint a fresh identity on the next start.
@@ -484,13 +721,16 @@ def drop_unit(unit_id: str, boot_root: Path | None = None) -> dict:
     paths = [Path(item["path"]) for item in rows_here if Path(item["path"]).is_dir()]
     taken, cards, rows = [], 0, 0
     for path in paths:
-        out = uninject(path)
+        out = uninject(path, unit_id=unit_id)
         taken.append({"path": path.as_posix(), "faces_removed": len(out["removed"])})
         if unitlink.clear_link(path):
             cards += 1
     for item in rows_here:
         if state.clear_workspace_unit(item["path"]):
             rows += 1
+    # 进退役账本再删行——注册表行/卡/成员行清账之外的最后一段保险，
+    # 目录重开（重登记+重折）也不许把这条主题带回来（retired-units.jsonl 是唯一权威）。
+    state.retire_units([dict(record, unit_id=unit_id)], utc_stamp())
     removed = state.remove_unit(unit_id)
     return {
         "unit_id": unit_id,

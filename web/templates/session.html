@@ -18,11 +18,28 @@
 </div>
 
 <div class="card muted">
-  这里只有结构与出处；正文不保存。
+  这里只有结构与出处；正文不保存（原文在 vault 分片里，下面只列 assistant 块供落锚引用）。
   {# S1：原来那句是「这里只有结构：行数、时间、字段名。正文没有被保存，所以详情页也显示不出来。」
      前半的列举上面那张表就是它，后半"所以显示不出来"是替我们解释实现的因果句。
-     隐私承诺本身（正文不保存）一字没丢——它是这张页最该说的一句话。 #}
+     隐私承诺本身（正文不保存）一字没丢——它是这张页最该说的一句话。
+     屏4：正文从 vault 分片只读列出 assistant 块，块级「落锚」入口（M2 收编）；
+     预填会话键/起止时刻跳资产页落锚表单，结论句仍由人写。#}
 </div>
+
+{% if blocks %}
+<div class="card">
+  <div style="font-weight:700;margin-bottom:8px">assistant 块（{{ blocks|length }}）</div>
+  {% for b in blocks %}
+  <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:10px">
+    <div class="muted" style="font-size:12px">assistant · {{ b.ts|local_ts("—") }}
+      <a href="{{ url_for('assets_page', anchor_session=session_key, anchor_from=b.ts or '', anchor_to=b.ts or '', anchor_quote=b.text) }}"
+         style="margin-left:10px">落锚到资产 ↗</a>
+    </div>
+    <div style="margin-top:6px;font-size:13px;white-space:pre-wrap">{{ b.text }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <p><a href="{{ url_for('evidence_page') }}">← 回到这个协作主题的证据清单</a></p>
 {% endblock %}

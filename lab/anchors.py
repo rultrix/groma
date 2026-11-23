@@ -136,6 +136,23 @@ def render_claims(claims: list[dict], max_items: int | None = None,
         if claim.get("state") != "verified":
             omitted += 1
             continue
+        if claim.get("material") and not claim.get("quote"):
+            # 活引用：指针不搬运——载荷只给一句 claim + 指路，全文按引用去读。
+            ref = ((claim.get("material") or {}).get("locator") or {}).get("ref") or "？"
+            block = [claim["title"], "全文见 `%s`（施工前必读）" % ref]
+            cost = sum(len(line) + 1 for line in block)
+            if max_items is not None and items >= max_items:
+                omitted += 1
+                continue
+            if max_chars is not None and items and chars + cost > max_chars:
+                omitted += 1
+                continue
+            if lines:
+                lines.append("")
+            lines.extend(block)
+            items += 1
+            chars += cost
+            continue
         block = [claim["title"], anchor_line(claim)] + ["> " + l for l in claim["quote"].split("\n")]
         cost = sum(len(line) + 1 for line in block)
         if max_items is not None and items >= max_items:
@@ -150,3 +167,68 @@ def render_claims(claims: list[dict], max_items: int | None = None,
         items += 1
         chars += cost
     return lines, omitted
+
+
+# 时间预设：零 JS 表单里给「末回合 / 末 N 分钟」两个一键窗口；
+# 值 = 回看的分钟数，None = 只取最后一条记录。
+WINDOW_PRESETS = {"last-turn": None, "last-5-min": 5, "last-30-min": 30}
+
+
+def anchor_window(session_key: str, preset: str, vault_root: Path | None = None) -> tuple[str, str]:
+    """Resolve a form preset to a concrete (from_ts, to_ts) window.
+
+    The anchor of "末回合" is the newest record in the session; N-minute presets
+    reach back from that same instant. Both bounds are UTC `Z` strings so they
+    compare like the vault's own timestamps do.
+    """
+    from datetime import timedelta
+
+    if preset not in WINDOW_PRESETS:
+        raise LabError("未知的时间预设：%s" % preset)
+    vr = Path(vault_root) if vault_root else vault.vault_root()
+    index = vault.read_index(vr)
+    entry = _session_entry(index, session_key)
+    records = _shard_records(index, entry)
+    stamps = sorted(str(item.get("ts_utc") or "") for item in records if item.get("ts_utc"))
+    if not stamps:
+        raise LabError("这个会话在 vault 里没有带时刻的记录：%s" % session_key)
+    last = _instant(stamps[-1])
+    minutes = WINDOW_PRESETS[preset]
+    start = last if minutes is None else last - timedelta(minutes=minutes)
+    fmt = "%Y-%m-%dT%H:%M:%S.%fZ" if last.microsecond else "%Y-%m-%dT%H:%M:%SZ"
+    return start.strftime("%Y-%m-%dT%H:%M:%SZ"), last.strftime(fmt)
+
+
+# -- 材料活引用 ---------------------------------------------------------
+
+# 组织口子 = scheme 枚举值：将来加 `org`（网络路径）一行不改——留口子不重构。
+MATERIAL_SCHEMES = ("ws-rel",)
+
+
+def validate_material_locator(locator: dict | None) -> str:
+    """红线延伸：locator 不含绝对路径、不含凭据；单机期只有 `ws-rel`。返回清洗后的 ref。"""
+    locator = locator or {}
+    scheme = str(locator.get("scheme") or "ws-rel").strip()
+    ref = str(locator.get("ref") or "").strip()
+    if scheme not in MATERIAL_SCHEMES:
+        raise LabError("locator.scheme 只支持 %s（%s 是预留的组织口子）：%s"
+                       % ("、".join(MATERIAL_SCHEMES), "org", scheme))
+    if not ref:
+        raise LabError("locator.ref 不能为空")
+    if "://" in ref or "@" in ref:
+        raise LabError("locator.ref 不许是 URL 或带凭据的路径：%s" % ref)
+    pure = ref.replace("\\", "/")
+    if pure.startswith("/") or (len(pure) > 1 and pure[1] == ":") or pure.startswith("~"):
+        raise LabError("locator.ref 不许是绝对路径（只收工作区相对路径）：%s" % ref)
+    parts = [part for part in pure.split("/") if part not in ("", ".")]
+    if any(part == ".." for part in parts):
+        raise LabError("locator.ref 不许越出工作区（..）：%s" % ref)
+    return "/".join(parts)
+
+
+def material_snapshot(root: Path, ref: str) -> str:
+    """铸资产时给材料算文件指纹；文件不在就拒（落锚要指到真东西）。"""
+    path = Path(root) / ref
+    if not path.is_file():
+        raise LabError("材料文件不存在：%s（相对工作区根）" % ref)
+    return hashlib.sha256(path.read_bytes()).hexdigest()

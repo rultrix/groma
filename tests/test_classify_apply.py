@@ -174,12 +174,13 @@ class ReforgeTests(ApplyFixture):
         self.assertEqual(topics.stale_after_undo(self.topic_id)["dropped"], [])
 
     def test_the_asset_already_served_is_not_silently_rewritten(self) -> None:
+        """资产单例化改写，单槽覆写无文件级回滚（母本 §13 风险账）——
+        undo 后重铸=诚实覆写，指纹改变；审计归 reforges 账本，不再靠旧代目录留档。"""
         first = topics.reforge(self.root, self.topic_id)
         topics.undo(self.topic_id, [(ROWS[0]["source"], ROWS[0]["path"])], decided_by="human")
-        before = asset.load_asset(self.root, first["asset_id"])
-        topics.reforge(self.root, self.topic_id)
-        after = asset.load_asset(self.root, first["asset_id"])
-        self.assertEqual(before, after)  # content-addressed and immutable: the old draft stays
+        second = topics.reforge(self.root, self.topic_id)
+        self.assertNotEqual(second["asset_id"], first["asset_id"])
+        self.assertFalse(first.get("unchanged"), "undo 之后证据集变了，不该报没变不重铸")
 
     def test_reforge_refuses_a_topic_with_no_active_evidence(self) -> None:
         topics.undo(self.topic_id, sorted(self.keys()), decided_by="human")

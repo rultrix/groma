@@ -1,15 +1,20 @@
 {% extends "base.html" %}
+{% from "_ui.html" import tip %}
 {% block body %}
 <h1>证据清单</h1>
 <div class="muted" style="margin:-8px 0 14px">
   {# E1：这里原来第一句是「这里回答的是『这个主题由哪几段证据组成』，不是『谁和谁有关系』。」
      那是对着一张已经下线的图辩护（K17 拆的是关系图页，见 ARCHITECTURE §4.2.2 第 1 条
      「用户不问它——六个真实提问里没有一条是"谁和谁有关系"」）。辩护属于文档，不属于页面抬头。 #}
-  <b>{{ evidence_unit.name or evidence_unit.unit_id }}</b> ·
+  <b>{{ evidence_name }}</b>{{ tip("工程键 " ~ evidence_unit.unit_id) }} ·
   <b>{{ evidence_workspaces|length }} 个工作区</b> ·
   <b>{{ evidence_rows|length }} 条证据</b> ·
   {{ evidence_sessions }} 个会话（已采到的，按出处去重）。
 </div>
+
+{# 投影展示一行——载荷=f(受众) 这个事实在上文一句话说完，实现判据（净增益折叠/
+   视角句规则）留在 PROPOSAL，不上界面。数据=角色表+FACE→harness 映射，服务端算好。#}
+<div class="scope-bar">{{ projection_line }}</div>
 
 <div class="card">
   <table>
@@ -20,7 +25,8 @@
     {% for row in evidence_rows %}
     <tr class="evidence-row">
       <td>
-        <a href="{{ url_for('session_page', source=row.source, path=row.path) }}">
+          {# 链接带主题参数——session 页按主题成员并集解析，证据落在别的成员区不再「找不到」。#}
+          <a href="{{ url_for('session_page', source=row.source, path=row.path, unit=evidence_unit.unit_id) }}">
           <code>{{ row.source }}:{{ row.path }}</code></a>
         {% if not row.collected %}<span class="badge off">锚点已不在 digest 里</span>{% endif %}
       </td>

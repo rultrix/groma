@@ -191,39 +191,38 @@ def _card_created(path: str) -> str:
 
 
 def sync_units() -> dict:
-    """Fold identity cards into `units.json`. One-time per unit_id it has not seen.
+    """Fold *human-made* traces into `units.json`; identity cards fold nothing.
 
-    A card is how a folder says "I am about Unit X" -- on another machine, or in a
-    second clone. Importing it is what makes that show up as one Unit without the
-    human re-joining every folder. After the record exists, only explicit joins
-    add folders, so a `leave` is never quietly undone by a stale card.
-
-    这里只标来源，不改折叠的范围：一张遗留的卡让目录"重开即复活"是已拍并实现过的形状，
-    关掉它得另立一刀。界面上"算不算协作主题"由 `is_theme` 一处判，折出来的行标 `card` 之后，
-    那条记录仍在账里（作用域、资产落点都不受影响），只是不再冒充人建的主题。
+    身份卡只证明"这个目录是谁的工作区"，不再折出协作主题行——
+    一张遗留的卡让目录"重开即复活"的旧形状就此退役（
+    `test_a_leftover_card_still_revives_its_unit` / `..._revives_the_unit_when_the_folder_reopens`）。
+    仍折的两支都来自**人做过的动作**：显式 join 留下的成员行、注册表行上人设的主题指针；
+    而退役账本（`retired-units.jsonl`，`drop_unit`/remove_workspace 孤儿级联都会写）是
+    "这条主题删过"的唯一权威——账上有名的 id，卡与两支折叠都不许把它折回来。
+    界面上"算不算协作主题"仍由 `is_theme` 一处判（origin 三值 card/human/retired 的判定不变）。
     """
     known = {item["unit_id"] for item in state.list_units()}
+    # 退役账本：删掉的主题，卡与注册表行都不许把它折回来——账本是唯一权威。
+    retired = state.retired_unit_ids()
+    created: list[str] = []
+    # 注册表行折支（第二入口）：行上的主题指针是人设的（join/建主题），不是卡。
+    # 删除主题时 drop_unit 已把这些行清账（clear_workspace_unit），所以不会借这一支复活。
     groups: dict[str, list[dict]] = {}
     for record in state.list_workspaces():
-        link = unitlink.read_link(record["path"]) or {}
-        unit_id = link.get("unit_id") or record.get("unit_id")
+        unit_id = record.get("unit_id")
         if unit_id:
-            groups.setdefault(unit_id, []).append({**record, "link": link})
-    created: list[str] = []
+            groups.setdefault(unit_id, []).append(record)
     for unit_id, items in sorted(groups.items()):
-        if unit_id in known:
+        if unit_id in known or unit_id in retired:
             continue
         home = sorted(items, key=lambda item: (_card_created(item["path"]) or "9", item["path"]))[0]
-        name = next((item["link"].get("name") for item in items if item["link"].get("name")), None)
-        org = next((item["link"].get("org_path") for item in items if item["link"].get("org_path")), None)
-        # 这一支折出来的行来源是卡，不是人：显式标 `card`，别让界面去猜（缺省即 human 会把机器折的说成人建的）。
-        state.upsert_unit(unit_id, name=name or Path(home["path"]).name, org_path=org,
+        # 折出来的行来源仍是机器的账（不是 `human`）：显式标 `card`，别让界面去猜。
+        state.upsert_unit(unit_id, name=Path(home["path"]).name,
                           home_binding=home["ref"], origin="card")
-        for item in items:
-            if item["ref"] != home["ref"]:
-                state.add_membership(unit_id, item["ref"], role=ROLE_EVIDENCE, signal="identity-card", source="import")
         created.append(unit_id)
     for membership in state.list_memberships():
+        if membership["unit_id"] in retired:
+            continue
         unit_id = membership["unit_id"]
         if unit_id in known or unit_id in created:
             continue
@@ -661,10 +660,12 @@ def scan_paths_for(roots: list[str]) -> list[Path]:
 
 
 def asset_dirs_for(roots: list[str]) -> list[Path]:
+    """单例化：glob("asset-*") 多代目录退役——每个根只认单槽 assets/current/。"""
     paths: list[Path] = []
     for path in roots:
-        folder = meta_dir(Path(path)) / "assets"
-        paths.extend(sorted(folder.glob("asset-*")) if folder.is_dir() else [])
+        folder = meta_dir(Path(path)) / "assets" / "current"
+        if (folder / "asset.json").is_file():
+            paths.append(folder)
     return paths
 
 
