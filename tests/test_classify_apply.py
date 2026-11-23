@@ -1,8 +1,7 @@
 """S2: the pack -> apply -> reforge chain, with L1's refusal gates on the product path.
 
-Test numbers in the names map to §六 of `docs/TASK-topic-model-v0.40.md`:
-#2 unclassified arithmetic, #3 apply happy path, #4 idempotence, #5 anchorless
-refusal, #6 undo reaching a re-forge, #8 stale token refusal.
+Covered cases: #2 unclassified arithmetic, #3 apply happy path, #4 idempotence,
+#5 anchorless refusal, #6 undo reaching a re-forge, #8 stale token refusal.
 """
 
 from __future__ import annotations
